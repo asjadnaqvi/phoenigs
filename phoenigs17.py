@@ -99,6 +99,9 @@ if center_country in G:
     # Top N partners
     top_n = col1.slider("Number of top neighbors", min_value=2, max_value=10, value=5)
     risk_threshold = col1.slider("Risk threshold", min_value=0.0, max_value=1.0, value=0.5, step=0.05)
+    min_width = col1.slider("Minimum edge width", min_value=0.1, max_value=2.0, value=0.3, step=0.1)
+    max_width = col1.slider("Maximum edge width", min_value=3.0, max_value=10.0, value=8.0, step=0.5)
+    dim_opacity = col1.slider("Dimmed edge opacity", min_value=0.0, max_value=1.0, value=0.1, step=0.05)
 
     top_flows_df = df_product[df_product['from'] == center].nlargest(top_n, 'value')
     inner_circle = top_flows_df['to'].tolist()
@@ -148,7 +151,8 @@ if center_country in G:
 
 # Edge data
 edge_x, edge_y, edge_width, edge_color, edge_hover = [], [], [], [], []
-max_edge_weight = df_product['flow_weight'].max()
+visible_weights = [edge[2]["flow_weight"] for edge in G.edges(data=True) if edge[0] in pos and edge[1] in pos]
+max_edge_weight = max(visible_weights) if visible_weights else 1
 for edge in G.edges(data=True):
     if edge[0] not in pos or edge[1] not in pos:
         continue
@@ -162,7 +166,7 @@ for edge in G.edges(data=True):
     scaled_max = np.log1p(max_edge_weight)
     
     # Edge thickness scaling bounds
-    min_width, max_width = 0.2, 5
+    # Use sliders for min_width and max_width above
     width = (scaled_weight / scaled_max) * (max_width - min_width) + min_width
     edge_width.append(width)
     # edge_width.append((weight / max_edge_weight * 15) if max_edge_weight and not pd.isna(weight) else 1)
@@ -180,7 +184,7 @@ for edge in G.edges(data=True):
     elif is_relevant:
         edge_color.append("rgba(170, 170, 170, 0.6)")
     else:
-        edge_color.append("rgba(170, 170, 170, 0.1)")  # dimmed edges for unrelated flows
+        edge_color.append(f"rgba(170, 170, 170, {dim_opacity})")  # dimmed edges for unrelated flows
     try:
         risk_display = f"{float(risk):.2f}"
     except:
@@ -193,24 +197,25 @@ for i in range(0, len(edge_x), 3):
         x=edge_x[i:i+3],
         y=edge_y[i:i+3],
         line=dict(width=edge_width[i // 3], color=edge_color[i // 3]),
+        mode='lines+markers',
+        marker=dict(size=1, color='rgba(0,0,0,0)'),
         hoverinfo='text',
-        text=[edge_hover[i // 3]] * 3,
-        mode='lines'
+        text=[edge_hover[i // 3]] * 3
     )
     edge_traces.append(trace)
 
-# Define region colors
+# Define region colors (colorblind-friendly)
 region_colors = {
-    "Europe"  : "#1f77b4",
-    "Asia"    : "#ff7f0e",
-    "Africa"  : "#2ca02c",
-    "Oceania" : "#d62728",
+    "Europe": "#1f77b4",
+    "Asia": "#ff7f0e",
+    "Africa": "#2ca02c",
+    "Oceania": "#d62728",
     "Americas": "#9467bd",
-    "Other"   : "#9467bd"
+    "Other": "#8c564b"
 }
 
 # Node trace with actual country names and ISO3 labels
-node_x, node_y, node_text, node_size, node_label, node_color = [], [], [], [], [], []
+node_x, node_y, node_text, node_size, node_label, node_color, node_region = [], [], [], [], [], [], []
 for node in G.nodes():
     if node not in pos:
         continue
@@ -229,6 +234,7 @@ for node in G.nodes():
         iso3_code = node
         region = "Other"
     node_label.append(iso3_code)
+    node_region.append(region)
     node_color.append(region_colors.get(region, "lightgray"))
     label = f"{name} ({iso3_code})<br>Exports: {exports:,.0f}"
     node_text.append(label)
@@ -239,7 +245,7 @@ for node in G.nodes():
 
 # Highlight Austria
 highlight_color = "tomato"
-node_color = [highlight_color if lbl == "AUT" else col for lbl, col in zip(node_label, node_color)]
+node_color = [highlight_color if lbl.startswith("Austria") or "AUT" in lbl else region_colors.get(region, "lightgray") for lbl, region in zip(node_label, node_region)]
 
 node_trace = go.Scatter(
     x=node_x, y=node_y,
@@ -264,7 +270,7 @@ fig = go.Figure(data=edge_traces + [node_trace],
                     title=dict(text=f"Trade Network for: {selected_label}", font=dict(size=16)),
                     showlegend=False,
                     hovermode='closest',
-                    height=600,              
+                    height=800,              
                     margin=dict(b=20, l=5, r=5, t=40),
                     xaxis=dict(showgrid=False, zeroline=False, visible=False),
                     yaxis=dict(showgrid=False, zeroline=False, visible=False)
