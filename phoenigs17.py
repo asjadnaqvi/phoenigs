@@ -86,10 +86,7 @@ G = nx.from_pandas_edgelist(
     create_using=nx.DiGraph()
 )
 
-with col1:
-    available_nodes = sorted(set(df_product["from"]).union(df_product["to"]).intersection(set(G.nodes)))
-    default_index = available_nodes.index("AUT") if "AUT" in available_nodes else 0
-    center_country = st.selectbox("Select country:", available_nodes, index=default_index)
+center_country = "AUT"  # Fixed focus country
 
 # Recenter and relayer nodes around selected country
 if center_country in G:
@@ -98,17 +95,17 @@ if center_country in G:
 
     # Top N partners
     top_n = col1.slider("Number of top neighbors", min_value=2, max_value=10, value=5)
-    risk_threshold = col1.slider("Risk threshold", min_value=0.0, max_value=1.0, value=0.5, step=0.05)
-    min_width = col1.slider("Minimum edge width", min_value=0.1, max_value=2.0, value=0.3, step=0.1)
-    max_width = col1.slider("Maximum edge width", min_value=3.0, max_value=10.0, value=8.0, step=0.5)
-    dim_opacity = col1.slider("Dimmed edge opacity", min_value=0.0, max_value=1.0, value=0.1, step=0.05)
+    # Removed risk threshold slider
+    min_width = 0.3  # Set in code
+    max_width = 8  # Set in code
+    dim_opacity = 0.1  # Set in code
 
     top_flows_df = df_product[df_product['from'] == center].nlargest(top_n, 'value')
     inner_circle = top_flows_df['to'].tolist()
 
     # Outer ring: all remaining nodes with positive exports, sorted
     outer_min_val, outer_max_val = int(df_product['value'].min()), int(df_product['value'].max())
-    outer_value_threshold = col1.slider("Minimum export value for outer ring", min_value=1, max_value=outer_max_val, value=1000)
+    outer_value_threshold = 10000  # Set in code
 
     outer_df = df_product[(~df_product['from'].isin([center] + inner_circle))]
     outer_df = outer_df.groupby("from")["value"].sum().reset_index()
@@ -177,10 +174,24 @@ for edge in G.edges(data=True):
     important_nodes = set([center] + inner_circle)
     is_relevant = edge[0] in important_nodes or edge[1] in important_nodes
 
-    if is_relevant and edge[0] == center:
-        edge_color.append("rgba(0, 150, 0, 0.7)")  # direct edges from center
-    elif metric_type == "Risk-Weighted" and isinstance(risk, (float, int)) and not pd.isna(risk) and risk >= risk_threshold and is_relevant:
-        edge_color.append("rgba(255, 0, 0, 0.7)")
+
+    if metric_type == "Raw Flow" and is_relevant and edge[0] == center:
+        edge_color.append("rgba(0, 51, 153, 0.7)")  # Dark blue for Austria raw flows
+    
+    elif is_relevant and edge[0] == center:
+        if risk < 0.333:
+            edge_color.append("rgba(0, 200, 0, 0.7)")  # Green
+        elif risk < 0.666:
+            edge_color.append("rgba(255, 215, 0, 0.7)")  # Yellow
+        else:
+            edge_color.append("rgba(255, 0, 0, 0.7)")  # Red
+    elif metric_type == "Risk-Weighted" and isinstance(risk, (float, int)) and not pd.isna(risk) and is_relevant:
+        if risk < 0.25:
+            edge_color.append("rgba(0, 200, 0, 0.7)")
+        elif risk < 0.6:
+            edge_color.append("rgba(255, 215, 0, 0.7)")
+        else:
+            edge_color.append("rgba(255, 0, 0, 0.7)")
     elif is_relevant:
         edge_color.append("rgba(170, 170, 170, 0.6)")
     else:
@@ -191,7 +202,9 @@ for edge in G.edges(data=True):
         risk_display = "N/A"
     edge_hover.append(f"{edge[0]} → {edge[1]}<br>Flow: {weight:,.0f}<br>Risk: {risk_display}")
 
-edge_traces = []
+aut_edge_traces = []
+dimmed_edge_traces = []
+
 for i in range(0, len(edge_x), 3):
     trace = go.Scatter(
         x=edge_x[i:i+3],
@@ -202,7 +215,11 @@ for i in range(0, len(edge_x), 3):
         hoverinfo='text',
         text=[edge_hover[i // 3]] * 3
     )
-    edge_traces.append(trace)
+    if edge_color[i // 3] in ["rgba(0, 51, 153, 0.7)", "rgba(0, 200, 0, 0.7)", "rgba(255, 215, 0, 0.7)", "rgba(255, 0, 0, 0.7)"]:
+        aut_edge_traces.append(trace)
+    else:
+        dimmed_edge_traces.append(trace)
+# edge_traces.append(trace)
 
 # Define region colors (colorblind-friendly)
 region_colors = {
@@ -265,7 +282,7 @@ node_trace = go.Scatter(
 )
 
 # Build and render figure
-fig = go.Figure(data=edge_traces + [node_trace],
+fig = go.Figure(data=dimmed_edge_traces + aut_edge_traces + [node_trace],
                 layout=go.Layout(
                     title=dict(text=f"Trade Network for: {selected_label}", font=dict(size=16)),
                     showlegend=False,
