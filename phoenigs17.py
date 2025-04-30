@@ -5,6 +5,7 @@ import numpy as np
 import plotly.graph_objects as go
 import openpyxl  # Ensure openpyxl is available
 import math
+from scipy import stats  # Add scipy dependency
 
 def load_data():
     df = pd.read_csv("baci_hs22_2023.csv")
@@ -28,6 +29,7 @@ def load_data():
         wgi = wgi[["iso3", "risk"]].dropna()
         wgi["risk"] = pd.to_numeric(wgi["risk"], errors="coerce")
         min_risk, max_risk = wgi["risk"].min(), wgi["risk"].max()
+        # wgi["ps_norm"] = 1 - ((wgi["risk"] + 2.7) / 5) ## philips formula
         wgi["ps_norm"] = 1 - ((wgi["risk"] - min_risk) / (max_risk - min_risk))
         df = df.merge(wgi[["iso3", "ps_norm"]], left_on="from", right_on="iso3", how="left")
     except Exception as e:
@@ -43,14 +45,14 @@ def load_data():
     df["eu"] = df["to"].isin(eu_countries)
 
     # Debug: Check the 'eu' column
-    #st.write("EU Column:", df[["to", "eu"]].drop_duplicates())
+    # st.write("EU Column:", df[["to", "eu"]].drop_duplicates())
 
     return df
 
 # --- Page layout ---
 st.set_page_config(layout="wide")
 
-# Add a placeholder for the title and logo
+# Add a placeholder for the title
 header_col1, header_col2 = st.columns([5, 1])
 
 # with header_col2:
@@ -58,8 +60,7 @@ header_col1, header_col2 = st.columns([5, 1])
     # st.image("path/to/logo.png", width=100)  # Replace "path/to/logo.png" with the actual path to your logo file
 
 with header_col1:
-    st.title("Lieferkettenrisiken")   ## dashboard title
-
+    st.title("Placeholder for title + Logo")   ## dashboard title
 
 
 col1, col2, col3 = st.columns([1, 4, 1])
@@ -82,7 +83,7 @@ with col1:
     selected_label = st.selectbox("Produkt auswählen:", product_labels)
     selected_product = product_lookup[selected_label]
     # Remove raw flow option and set metric type directly
-metric_type = col1.radio("", ["Ohne risiko", "Mit risiko"], index=0)
+metric_type = col1.radio("Select metric", ["Ohne risiko", "Mit risiko"], index=0, label_visibility="hidden")
 
 # Filter data
 df_product = df[df["product"] == selected_product].copy()
@@ -127,14 +128,16 @@ if center_country in G:
 
     # Outer ring: all remaining nodes with positive exports, sorted
     outer_min_val, outer_max_val = int(df_product['value'].min()), int(df_product['value'].max())
-    outer_value_threshold = 10000  # Set in code
+    outer_value_threshold = 1000  # Set in code
 
     outer_df = df_product[(~df_product['from'].isin([center] + inner_circle))]
     outer_df = outer_df.groupby("from")["value"].sum().reset_index()
     outer_df = outer_df[outer_df["value"] >= outer_value_threshold]
     outer_df = outer_df.merge(df_product[["from", "ex_region"]].drop_duplicates(), on="from", how="left")
     outer_df = outer_df.sort_values(by=["ex_region", "value"], ascending=[True, False])
-    outer_circle = outer_df["from"].tolist()
+
+    # Limit the number of outer circle nodes to 40
+    outer_circle = outer_df["from"].tolist()[:30]
 
     def polar_to_cartesian(radius, angle_deg):
         angle_rad = math.radians(angle_deg)
@@ -228,7 +231,8 @@ for i in range(0, len(edge_x), 3):
         mode='lines+markers',
         marker=dict(size=1, color='rgba(0,0,0,0)'),
         hoverinfo='text',
-        text=[edge_hover[i // 3]] * 3
+        text=[edge_hover[i // 3]] * 3,
+        showlegend=False  # Disable legend for edge traces
     )
     if edge_color[i // 3] in ["rgba(0, 51, 153, 0.7)", "rgba(0, 200, 0, 0.7)", "rgba(255, 215, 0, 0.7)", "rgba(255, 0, 0, 0.7)"]:
         aut_edge_traces.append(trace)
@@ -236,7 +240,7 @@ for i in range(0, len(edge_x), 3):
         dimmed_edge_traces.append(trace)
 # edge_traces.append(trace)
 
-# Define region colors (colorblind-friendly)
+# Define region colors
 region_colors = {
     "Europe": "#1f77b4",
     "Asia": "#ff7f0e",
@@ -293,8 +297,30 @@ node_trace = go.Scatter(
         opacity=0.9,
         size=node_size,
         line=dict(color="black", width=0.8)
-    )
+    ),
+    showlegend=False  # Disable legend for node trace
 )
+
+
+# Filter regions based on active nodes in the graph
+active_regions = set(node_region)  # Get unique regions from the active graph
+filtered_region_colors = {region: color for region, color in region_colors.items() if region in active_regions}
+
+# Add region legend
+region_traces = []
+for region, color in filtered_region_colors.items():
+    region_traces.append(
+        go.Scatter(
+            x=[None],  # Dummy point for legend
+            y=[None],
+            mode='markers',
+            marker=dict(size=15, color=color),
+            name=region,  # Explicitly set the region name
+            showlegend=True  # Ensure the legend is shown for active regions
+        )
+    )
+
+
 
 # --- Calculate and display hub scores ---
 with col3:
@@ -310,22 +336,43 @@ with col3:
         d["weight"] = 1  # Raw Flow: All weights set to 1
     hubs_raw = nx.hits(H_raw, normalized=True)[0]
 
+    # Convert values to numpy array for min-max normalization
+    scores = np.array(list(hubs_raw.values()))
+    min_score = scores.min()
+    max_score = scores.max()
+
+    if max_score != min_score:
+        hubs_raw = {k: 100 * (v - min_score) / (max_score - min_score) for k, v in hubs_raw.items()}
+    else:
+        hubs_raw = {k: 0 for k in hubs_raw}  # All values are the same    
+
     H_risk = G.copy()
     for u, v, d in H_risk.edges(data=True):
         d["weight"] = d.get("flow_weight", 1)  # Risk-Weighted: Use flow_weight
     hubs_risk = nx.hits(H_risk, normalized=True)[0]
 
+    # Convert values to numpy array for min-max normalization
+    scores = np.array(list(hubs_risk.values()))
+    min_score = scores.min()
+    max_score = scores.max()
+
+    if max_score != min_score:
+        hubs_risk = {k: 100 * (v - min_score) / (max_score - min_score) for k, v in hubs_risk.items()}
+    else:
+        hubs_risk = {k: 0 for k in hubs_risk}  # All values are the same    
+
+
     # Filter EU nodes
-    eu_nodes = [n for n in G.nodes if df[df["from"] == n]["eu"].any()]
+    eu_nodes = [n for n in G.nodes if df[df["to"] == n]["eu"].any()]
     # st.write("EU Nodes:", eu_nodes)  # Debug: Check EU nodes
 
     # Extract hub scores for EU nodes
-    hub_raw_vals = [hubs_raw.get(n, np.nan) for n in eu_nodes]
+    hub_raw_vals  = [hubs_raw.get(n, np.nan) for n in eu_nodes]
     hub_risk_vals = [hubs_risk.get(n, np.nan) for n in eu_nodes]
 
     # Debug: Check extracted hub scores
-    # st.write("Hub Raw Values:", hub_raw_vals)
-    # st.write("Hub Risk Values:", hub_risk_vals)
+    #st.write("Hub Raw Values:", hub_raw_vals)
+    #st.write("Hub Risk Values:", hub_risk_vals)
 
     # Create DataFrame for plotting
     plot_df = pd.DataFrame({
@@ -337,7 +384,24 @@ with col3:
     # Debug: Check the DataFrame
     # st.write("Plot DataFrame:", plot_df)
 
-    # Define hub_values based on the selected metric type
+    # Debug: Check Austria's hub score
+    # st.write("Austria Row in DataFrame:", plot_df[plot_df["Country"] == "AUT"])
+    # st.write("Extracted Austria Hub Score (Raw):", plot_df.loc[plot_df["Country"] == "AUT", "Raw Hub Score"].values)
+    # st.write("Extracted Austria Hub Score (Risk-Weighted):", plot_df.loc[plot_df["Country"] == "AUT", "Risk-weighted Hub Score"].values)
+    # st.write("Is Austria in EU Nodes:", "AUT" in eu_nodes)
+    # st.write("Hub Values List:", hub_values)
+    
+    # Handle empty hub values
+    if not hub_raw_vals:  # Check if the list is empty
+        st.warning("No valid hub scores available for the selected metric.")
+        hub_raw_vals = [0]  # Placeholder to avoid errors
+
+    # st.write("Average Hub Score:", avg)  # Debug: Check average hub score
+    # st.write("Austria Hub Score:", aut)  # Debug: Check Austria's hub score
+
+    fig1 = go.Figure()
+
+    # Add box plot for hub values
     if metric_type == "Ohne risiko":
         hub_values = plot_df["Raw Hub Score"].dropna().tolist()
         # Extract Austria's hub score using .loc[]
@@ -345,47 +409,39 @@ with col3:
             aut = plot_df.loc[plot_df["Country"] == "AUT", "Raw Hub Score"].values[0]
         else:
             aut = np.nan
+
+        avg = np.nanmean(hub_raw_vals)
+
+        fig1.add_trace(
+            go.Box(
+                y=hub_raw_vals,
+                name="",
+                boxpoints=False,  # Disable outliers
+                #boxpoints='outliers',
+                marker_color='lightblue',
+                showlegend=False
+            )
+        )
     else:
         hub_values = plot_df["Risk-weighted Hub Score"].dropna().tolist()
-        # Extract Austria's hub score using .loc[]
+
         if "AUT" in plot_df["Country"].values:
             aut = plot_df.loc[plot_df["Country"] == "AUT", "Risk-weighted Hub Score"].values[0]
         else:
             aut = np.nan
 
-    # Debug: Check Austria's hub score
-    # st.write("Austria Row in DataFrame:", plot_df[plot_df["Country"] == "AUT"])
-    # st.write("Extracted Austria Hub Score (Raw):", plot_df.loc[plot_df["Country"] == "AUT", "Raw Hub Score"].values)
-    # st.write("Extracted Austria Hub Score (Risk-Weighted):", plot_df.loc[plot_df["Country"] == "AUT", "Risk-weighted Hub Score"].values)
-    # st.write("Is Austria in EU Nodes:", "AUT" in eu_nodes)
-    # st.write("Hub Values List:", hub_values)
+        avg = np.nanmean(hub_risk_vals)
 
-    # Debug: Check hub values for the box plot
-    # st.write("Hub Values for Box Plot:", hub_values)
-
-    # Handle empty hub values
-    if not hub_values:  # Check if the list is empty
-        st.warning("No valid hub scores available for the selected metric.")
-        hub_values = [0]  # Placeholder to avoid errors
-
-    # Calculate average and plot
-    avg = np.nanmean(hub_values)
-    # st.write("Average Hub Score:", avg)  # Debug: Check average hub score
-    # st.write("Austria Hub Score:", aut)  # Debug: Check Austria's hub score
-
-    fig1 = go.Figure()
-
-    # Add box plot for hub values
-    fig1.add_trace(
-        go.Box(
-            y=hub_values,
-            name="",
-            boxpoints=False,  # Disable outliers
-            #boxpoints='outliers',
-            marker_color='goldenrod',
-            showlegend=False
-        )
-    )
+        fig1.add_trace(
+            go.Box(
+                y=hub_risk_vals,
+                name="",
+                boxpoints=False,  # Disable outliers
+                # boxpoints='outliers',
+                marker_color='lightblue',
+                showlegend=False
+            )
+        )    
 
     # Add scatter point for average hub score
     fig1.add_trace(
@@ -394,7 +450,7 @@ with col3:
             x=[""],
             mode='markers',
             name='EU',
-            marker=dict(color='darkblue', symbol='circle', size=12)
+            marker=dict(color='darkblue', symbol='circle', size=15)
         )
     )
 
@@ -406,7 +462,7 @@ with col3:
                 x=[""],
                 mode='markers',
                 name='Österreich',
-                marker=dict(color='tomato', symbol='x', size=12)
+                marker=dict(color='tomato', symbol='circle', size=15)
             )
         )
 
@@ -430,17 +486,16 @@ with col3:
 
         # Build and render figure
     with col2:
-        fig = go.Figure(data=dimmed_edge_traces + aut_edge_traces + [node_trace],
-                    layout=go.Layout(
-                        # title=dict(text=f"Netzwerk für: {selected_label}", font=dict(size=16)),
-                        showlegend=False,
-                        hovermode='closest',
-                        height=800,              
-                        margin=dict(b=20, l=5, r=5, t=40),
-                        xaxis=dict(showgrid=False, zeroline=False, visible=False),
-                        yaxis=dict(showgrid=False, zeroline=False, visible=False)
-                    )
-    )
+        fig = go.Figure(
+            data=dimmed_edge_traces + aut_edge_traces + [node_trace] + region_traces,
+            layout=go.Layout(
+                showlegend=True,  # Enable legend
+                hovermode='closest',
+                height=800,
+                margin=dict(b=20, l=5, r=5, t=40),
+                xaxis=dict(showgrid=False, zeroline=False, visible=False),
+                yaxis=dict(showgrid=False, zeroline=False, visible=False)
+            )
+        )
 
-with col2:
-    st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
