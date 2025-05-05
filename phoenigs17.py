@@ -128,16 +128,18 @@ if center_country in G:
 
     # Outer ring: all remaining nodes with positive exports, sorted
     outer_min_val, outer_max_val = int(df_product['value'].min()), int(df_product['value'].max())
-    outer_value_threshold = 1000  # Set in code
+    outer_value_threshold = 100  # Set in code
 
     outer_df = df_product[(~df_product['from'].isin([center] + inner_circle))]
     outer_df = outer_df.groupby("from")["value"].sum().reset_index()
     outer_df = outer_df[outer_df["value"] >= outer_value_threshold]
     outer_df = outer_df.merge(df_product[["from", "ex_region"]].drop_duplicates(), on="from", how="left")
-    outer_df = outer_df.sort_values(by=["ex_region", "value"], ascending=[True, False])
 
-    # Limit the number of outer circle nodes to 40
-    outer_circle = outer_df["from"].tolist()[:30]
+    # Limit the number of outer circle nodes to 15 per region
+    outer_df = outer_df.nlargest(30, "value")
+    outer_df = outer_df.sort_values(by=["ex_region", "value"], ascending=[True, False])
+    outer_circle = outer_df["from"].tolist()
+
 
     def polar_to_cartesian(radius, angle_deg):
         angle_rad = math.radians(angle_deg)
@@ -218,7 +220,7 @@ for edge in G.edges(data=True):
         risk_display = f"{float(risk):.2f}"
     except:
         risk_display = "N/A"
-    edge_hover.append(f"{edge[0]} → {edge[1]}<br>Flow: {weight:,.0f}<br>Risk: {risk_display}")
+    edge_hover.append(f"{edge[0]} → {edge[1]}<br>Werte: {weight:,.0f}<br>Risiko: {risk_display}")
 
 aut_edge_traces = []
 dimmed_edge_traces = []
@@ -242,12 +244,12 @@ for i in range(0, len(edge_x), 3):
 
 # Define region colors
 region_colors = {
-    "Europe": "#1f77b4",
-    "Asia": "#ff7f0e",
-    "Africa": "#2ca02c",
-    "Oceania": "#d62728",
-    "Americas": "#9467bd",
-    "Other": "#8c564b"
+    "Restliches Europa": "#abd0f5",
+    "Asien": "#ff7f0e",
+    "Afrika": "#2ca02c",
+    "Ozeanien": "#f25a78",
+    "Amerikas": "#9467bd",
+    "EU": "#057ef7",
 }
 
 # Node trace with actual country names and ISO3 labels
@@ -272,7 +274,7 @@ for node in G.nodes():
     node_label.append(iso3_code)
     node_region.append(region)
     node_color.append(region_colors.get(region, "lightgray"))
-    label = f"{name} ({iso3_code})<br>Exports: {exports:,.0f}"
+    label = f"{name} ({iso3_code})<br>Exporte: {exports:,.0f}"
     node_text.append(label)
 
     scaled_exports = np.log1p(exports)
@@ -418,7 +420,7 @@ with col3:
                 name="",
                 boxpoints=False,  # Disable outliers
                 #boxpoints='outliers',
-                marker_color='lightblue',
+                marker_color='#aaacad',
                 showlegend=False
             )
         )
@@ -438,7 +440,7 @@ with col3:
                 name="",
                 boxpoints=False,  # Disable outliers
                 # boxpoints='outliers',
-                marker_color='lightblue',
+                marker_color='#aaacad',
                 showlegend=False
             )
         )    
@@ -450,7 +452,7 @@ with col3:
             x=[""],
             mode='markers',
             name='EU',
-            marker=dict(color='darkblue', symbol='circle', size=15)
+            marker=dict(color='#057ef7', symbol='circle', size=15)
         )
     )
 

@@ -148,7 +148,6 @@ if center_country in G:
     outer_df = outer_df.groupby("from")["value"].sum().reset_index()
     outer_df = outer_df[outer_df["value"] >= outer_value_threshold]
     outer_df = outer_df.merge(df_product[["from", "ex_region"]].drop_duplicates(), on="from", how="left")
-    outer_df = outer_df.sort_values(by=["ex_region", "value"], ascending=[True, False])  # Sort by region, then by export value (descending)
 
     # outer_circle = outer_df["from"].tolist()
     # Slider for outer_circle limit
@@ -160,7 +159,11 @@ if center_country in G:
         step=1
     )
 
-    outer_circle = outer_df["from"].tolist()[:max_outer_circle]  # Select top nodes after sorting by region and value
+    #outer_circle = outer_df["from"].tolist()[:max_outer_circle]  # Select top nodes after sorting by region and value
+    outer_df = outer_df.nlargest(max_outer_circle, "value")
+    outer_df = outer_df.sort_values(by=["ex_region", "value"], ascending=[True, False])
+    outer_circle = outer_df["from"].tolist()
+
 
     def polar_to_cartesian(radius, angle_deg):
         angle_rad = math.radians(angle_deg)
@@ -259,12 +262,12 @@ for i in range(0, len(edge_x), 3):
 
 # Define region colors (colorblind-friendly)
 region_colors = {
-    "Europe": "#1f77b4",
-    "Asia": "#ff7f0e",
-    "Africa": "#2ca02c",
-    "Oceania": "#d62728",
-    "Americas": "#9467bd",
-    "Other": "#8c564b"
+    "Restliches Europa": "#abd0f5",
+    "Asien": "#ff7f0e",
+    "Afrika": "#2ca02c",
+    "Ozeanien": "#f25a78",
+    "Amerikas": "#9467bd",
+    "EU": "#057ef7",
 }
 
 # Define minimum and maximum node sizes
