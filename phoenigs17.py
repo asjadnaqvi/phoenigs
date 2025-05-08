@@ -52,15 +52,15 @@ def load_data():
 # --- Page layout ---
 st.set_page_config(layout="wide")
 
-# Add a placeholder for the title
-header_col1, header_col2 = st.columns([5, 1])
-
-# with header_col2:
-    # Placeholder for the logo
-    # st.image("path/to/logo.png", width=100)  # Replace "path/to/logo.png" with the actual path to your logo file
+# Title + image
+header_col1, header_col2 = st.columns([8, 1])
 
 with header_col1:
-    st.title("Placeholder for title + Logo")   ## dashboard title
+    st.header("Dashboard zu den Abhängigkeiten Österreichs im internationalen Handelsnetzwerk")   ## dashboard title
+
+with header_col2:
+    st.image("Logo.jpg", width=100)
+
 
 
 col1, col2, col3 = st.columns([1, 4, 1])
@@ -83,13 +83,13 @@ with col1:
     selected_label = st.selectbox("Produkt auswählen:", product_labels)
     selected_product = product_lookup[selected_label]
     # Remove raw flow option and set metric type directly
-metric_type = col1.radio("Select metric", ["Ohne risiko", "Mit risiko"], index=0, label_visibility="hidden")
+metric_type = col1.radio("Select metric", ["Ungewichtet mit Länderrisiko", "Gewichtet mit Länderrisiko"], index=0, label_visibility="hidden")
 
 # Filter data
 df_product = df[df["product"] == selected_product].copy()
 
 # Compute flow_weight and build graph before filtering by nodes for dropdown
-if metric_type == "Mit risiko" and "ps_norm" in df_product.columns:
+if metric_type == "Gewichtet mit Länderrisiko" and "ps_norm" in df_product.columns:
     df_product["flow_weight"] = df_product["value"] * df_product["ps_norm"]
 else:
     df_product["flow_weight"] = df_product["value"]
@@ -123,8 +123,15 @@ if center_country in G:
     max_width = 8  # Set in code
     dim_opacity = 0.1  # Set in code
 
-    top_flows_df = df_product[df_product['from'] == center].nlargest(top_n, 'value')
-    inner_circle = top_flows_df['to'].tolist()
+    # old code
+    #top_flows_df = df_product[df_product['from'] == center].nlargest(top_n, 'value')
+    #inner_circle = top_flows_df['to'].tolist()
+
+    # new code
+    top_flows_df = df_product[df_product['to'] == center].nlargest(top_n, 'value')
+    inner_circle = top_flows_df['from'].tolist()
+
+    # st.write(f"Top {top_n} partners for {center_country}:", top_flows_df)
 
     # Outer ring: all remaining nodes with positive exports, sorted
     outer_min_val, outer_max_val = int(df_product['value'].min()), int(df_product['value'].max())
@@ -136,7 +143,7 @@ if center_country in G:
     outer_df = outer_df.merge(df_product[["from", "ex_region"]].drop_duplicates(), on="from", how="left")
 
     # Limit the number of outer circle nodes to 15 per region
-    outer_df = outer_df.nlargest(30, "value")
+    outer_df = outer_df.nlargest(25, "value")
     outer_df = outer_df.sort_values(by=["ex_region", "value"], ascending=[True, False])
     outer_circle = outer_df["from"].tolist()
 
@@ -170,8 +177,6 @@ if center_country in G:
         pos[node] = polar_to_cartesian(3.0, angle)
     
 
-    # No additional ring — outer_circle now holds all remaining nodes
-    # Remaining ring removed to simplify layout
 
 # Edge data
 edge_x, edge_y, edge_width, edge_color, edge_hover = [], [], [], [], []
@@ -202,18 +207,18 @@ for edge in G.edges(data=True):
     is_relevant = edge[0] in important_nodes or edge[1] in important_nodes
 
 
-    if metric_type == "Ohne risiko" and is_relevant and edge[0] == center:
+    if metric_type == "Ungewichtet mit Länderrisiko" and is_relevant and edge[0] == center:
         edge_color.append("darkblue")  # Dark blue for Austria raw flows
 
-    elif metric_type == "Mit risiko" and isinstance(risk, (float, int)) and not pd.isna(risk) and is_relevant:
+    elif metric_type == "Gewichtet mit Länderrisiko" and isinstance(risk, (float, int)) and not pd.isna(risk) and is_relevant:
         if risk < 0.25:
-            edge_color.append("rgba(0, 200, 0, 0.7)")
+            edge_color.append("rgba(0, 200, 0, 0.7)") # green
         elif risk < 0.6:
-            edge_color.append("rgba(255, 215, 0, 0.7)")
+            edge_color.append("rgba(255, 215, 0, 0.7)") # yellow
         else:
-            edge_color.append("rgba(255, 0, 0, 0.7)")
+            edge_color.append("rgba(255, 0, 0, 0.7)") # red
     elif is_relevant:
-        edge_color.append("rgba(170, 170, 170, 0.7)")
+        edge_color.append("rgba(122, 198, 240, 0.7)") ## gray for related flows
     else:
         edge_color.append(f"rgba(170, 170, 170, {dim_opacity})")  # dimmed edges for unrelated flows
     try:
@@ -222,8 +227,9 @@ for edge in G.edges(data=True):
         risk_display = "N/A"
     edge_hover.append(f"{edge[0]} → {edge[1]}<br>Werte: {weight:,.0f}<br>Risiko: {risk_display}")
 
-aut_edge_traces = []
 dimmed_edge_traces = []
+relevant_edges = []
+center_edges = []
 
 for i in range(0, len(edge_x), 3):
     trace = go.Scatter(
@@ -236,20 +242,22 @@ for i in range(0, len(edge_x), 3):
         text=[edge_hover[i // 3]] * 3,
         showlegend=False  # Disable legend for edge traces
     )
-    if edge_color[i // 3] in ["rgba(0, 51, 153, 0.7)", "rgba(0, 200, 0, 0.7)", "rgba(255, 215, 0, 0.7)", "rgba(255, 0, 0, 0.7)"]:
-        aut_edge_traces.append(trace)
-    else:
+    # Append trace to the appropriate category
+    if "170, 170, 170" in edge_color[i // 3]:  # Dimmed edges
         dimmed_edge_traces.append(trace)
-# edge_traces.append(trace)
+    elif "darkblue" in edge_color[i // 3]:  # Center edges
+        center_edges.append(trace)
+    else:  # Relevant edges
+        relevant_edges.append(trace)
 
 # Define region colors
 region_colors = {
-    "Restliches Europa": "#abd0f5",
+    "Europa - Rest": "#abd0f5",
     "Asien": "#ff7f0e",
     "Afrika": "#2ca02c",
     "Ozeanien": "#f25a78",
     "Amerikas": "#9467bd",
-    "EU": "#057ef7",
+    "Europa - EU": "#057ef7",
 }
 
 # Node trace with actual country names and ISO3 labels
@@ -261,24 +269,34 @@ for node in G.nodes():
     node_x.append(x)
     node_y.append(y)
     exports = df_product[df_product['from'] == node]['value'].sum()
+    exports_to_center = df_product[(df_product['from'] == node) & (df_product['to'] == center_country)]['value'].sum()
+    exports_share = (exports_to_center / exports * 100) if exports > 0 else 0
     subset = df_product[df_product['from'] == node]
     if not subset.empty:
         row = subset.iloc[0]
         name = row["ex_name"] if "ex_name" in row else node
         iso3_code = row["ex_iso3"] if "ex_iso3" in row else node
         region = row["ex_region"] if "ex_region" in row else "Other"
+        risk_display = f"{row['ps_norm']:.2f}" if "ps_norm" in row and not pd.isna(row["ps_norm"]) else "N/A"
     else:
         name = node
         iso3_code = node
         region = "Other"
+        risk_display = "N/A"
     node_label.append(iso3_code)
     node_region.append(region)
     node_color.append(region_colors.get(region, "lightgray"))
-    label = f"{name} ({iso3_code})<br>Exporte: {exports:,.0f}"
+    label = (
+        f"{name} ({iso3_code})<br>"
+        f"Exporte - Gesamt: Tsd. EUR {exports:,.0f}<br>"
+        f"Exporte - {center_country}: Tsd. EUR {exports_to_center:,.0f} ({exports_share:.2f}%)<br>"
+        f"Risiko: {risk_display}"
+    )
     node_text.append(label)
 
+
     scaled_exports = np.log1p(exports)
-    size = (scaled_exports / np.log1p(df_product['value'].max())) * 40 + 10
+    size = (scaled_exports / np.log1p(df_product['value'].max())) * 60 + 8
     node_size.append(size)
 
 # Highlight Austria
@@ -308,9 +326,12 @@ node_trace = go.Scatter(
 active_regions = set(node_region)  # Get unique regions from the active graph
 filtered_region_colors = {region: color for region, color in region_colors.items() if region in active_regions}
 
+sorted_regions = sorted(filtered_region_colors.items(), key=lambda x: x[0])
+
+# Add region legend
 # Add region legend
 region_traces = []
-for region, color in filtered_region_colors.items():
+for region, color in sorted_regions:
     region_traces.append(
         go.Scatter(
             x=[None],  # Dummy point for legend
@@ -404,7 +425,7 @@ with col3:
     fig1 = go.Figure()
 
     # Add box plot for hub values
-    if metric_type == "Ohne risiko":
+    if metric_type == "Ungewichtet mit Länderrisiko":
         hub_values = plot_df["Raw Hub Score"].dropna().tolist()
         # Extract Austria's hub score using .loc[]
         if "AUT" in plot_df["Country"].values:
@@ -470,7 +491,7 @@ with col3:
 
     # Update layout
     fig1.update_layout(
-        title="Diversifikationsindex",
+        title=dict(text=f"Abhängigkeitsindex ({metric_type}): <br>{selected_label}", font=dict(size=16)),
         yaxis_title="Werte",
         height=600,
         margin=dict(l=20, r=20, t=40, b=20),
@@ -488,9 +509,11 @@ with col3:
 
         # Build and render figure
     with col2:
+        # Add traces in the desired order: dimmed -> relevant -> center
         fig = go.Figure(
-            data=dimmed_edge_traces + aut_edge_traces + [node_trace] + region_traces,
+            data=dimmed_edge_traces + relevant_edges + center_edges + [node_trace] + region_traces,
             layout=go.Layout(
+                title=dict(text=f"Direkte und indirekte Handelsverflechtungen ({metric_type}): <br>{selected_label}", font=dict(size=16)),
                 showlegend=True,  # Enable legend
                 hovermode='closest',
                 height=800,
