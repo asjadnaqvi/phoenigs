@@ -3,9 +3,9 @@ import pandas as pd
 import networkx as nx
 import numpy as np
 import plotly.graph_objects as go
-import openpyxl  # Ensure openpyxl is available
+import openpyxl  
 import math
-from scipy import stats  # Add scipy dependency
+from scipy import stats 
 
 def load_data():
     df = pd.read_csv("baci_hs22_2023.csv")
@@ -83,13 +83,13 @@ with col1:
     selected_label = st.selectbox("Produkt auswählen:", product_labels)
     selected_product = product_lookup[selected_label]
     # Remove raw flow option and set metric type directly
-metric_type = col1.radio("Select metric", ["Ungewichtet mit Länderrisiko", "Gewichtet mit Länderrisiko"], index=0, label_visibility="hidden")
+metric_type = col1.radio("Handelsverflechtungen", ["Ströme", "Länderrisiko-Ampel"], index=0)
 
 # Filter data
 df_product = df[df["product"] == selected_product].copy()
 
 # Compute flow_weight and build graph before filtering by nodes for dropdown
-if metric_type == "Gewichtet mit Länderrisiko" and "ps_norm" in df_product.columns:
+if metric_type == "Länderrisiko-Ampel" and "ps_norm" in df_product.columns:
     df_product["flow_weight"] = df_product["value"] * df_product["ps_norm"]
 else:
     df_product["flow_weight"] = df_product["value"]
@@ -117,15 +117,11 @@ if center_country in G:
     center = center_country
 
     # Top N partners
-    top_n = col1.slider("Anzahl der Top-Nachbarn", min_value=2, max_value=10, value=5)
-    # Removed risk threshold slider
-    min_width = 0.3  # Set in code
-    max_width = 8  # Set in code
-    dim_opacity = 0.1  # Set in code
+    top_n = col1.slider("Anzahl der Top-Importländer", min_value=2, max_value=10, value=5)
 
-    # old code
-    #top_flows_df = df_product[df_product['from'] == center].nlargest(top_n, 'value')
-    #inner_circle = top_flows_df['to'].tolist()
+    min_width   = 0.3   # Set in code
+    max_width   = 8     # Set in code
+    dim_opacity = 0.1  # Set in code
 
     # new code
     top_flows_df = df_product[df_product['to'] == center].nlargest(top_n, 'value')
@@ -142,7 +138,7 @@ if center_country in G:
     outer_df = outer_df[outer_df["value"] >= outer_value_threshold]
     outer_df = outer_df.merge(df_product[["from", "ex_region"]].drop_duplicates(), on="from", how="left")
 
-    # Limit the number of outer circle nodes to 15 per region
+    # Limit the number of outer circle nodes to 25 per region
     outer_df = outer_df.nlargest(25, "value")
     outer_df = outer_df.sort_values(by=["ex_region", "value"], ascending=[True, False])
     outer_circle = outer_df["from"].tolist()
@@ -177,11 +173,12 @@ if center_country in G:
         pos[node] = polar_to_cartesian(3.0, angle)
     
 
-
 # Edge data
 edge_x, edge_y, edge_width, edge_color, edge_hover = [], [], [], [], []
 visible_weights = [edge[2]["flow_weight"] for edge in G.edges(data=True) if edge[0] in pos and edge[1] in pos]
 max_edge_weight = max(visible_weights) if visible_weights else 1
+
+
 for edge in G.edges(data=True):
     if edge[0] not in pos or edge[1] not in pos:
         continue
@@ -195,7 +192,6 @@ for edge in G.edges(data=True):
     scaled_max = np.log1p(max_edge_weight)
     
     # Edge thickness scaling bounds
-    # Use sliders for min_width and max_width above
     width = (scaled_weight / scaled_max) * (max_width - min_width) + min_width
     edge_width.append(width)
     # edge_width.append((weight / max_edge_weight * 15) if max_edge_weight and not pd.isna(weight) else 1)
@@ -207,10 +203,13 @@ for edge in G.edges(data=True):
     is_relevant = edge[0] in important_nodes or edge[1] in important_nodes
 
 
-    if metric_type == "Ungewichtet mit Länderrisiko" and is_relevant and edge[0] == center:
-        edge_color.append("darkblue")  # Dark blue for Austria raw flows
 
-    elif metric_type == "Gewichtet mit Länderrisiko" and isinstance(risk, (float, int)) and not pd.isna(risk) and is_relevant:
+    if metric_type == "Ströme" and is_relevant and edge[1] == center:
+        edge_color.append("rgba(2, 8, 186, 0.8)")  # Dark blue for Austria raw flows
+    elif metric_type == "Ströme" and is_relevant and edge[0] == center:
+        edge_color.append("rgba(217, 2, 117, 0.65)")  # Dark blue for Austria raw flows
+    
+    elif metric_type == "Länderrisiko-Ampel" and isinstance(risk, (float, int)) and not pd.isna(risk) and is_relevant:
         if risk < 0.25:
             edge_color.append("rgba(0, 200, 0, 0.7)") # green
         elif risk < 0.6:
@@ -218,7 +217,7 @@ for edge in G.edges(data=True):
         else:
             edge_color.append("rgba(255, 0, 0, 0.7)") # red
     elif is_relevant:
-        edge_color.append("rgba(122, 198, 240, 0.7)") ## gray for related flows
+        edge_color.append("rgba(110, 197, 245, 0.65)") ## light blue for related flows
     else:
         edge_color.append(f"rgba(170, 170, 170, {dim_opacity})")  # dimmed edges for unrelated flows
     try:
@@ -243,21 +242,21 @@ for i in range(0, len(edge_x), 3):
         showlegend=False  # Disable legend for edge traces
     )
     # Append trace to the appropriate category
-    if "170, 170, 170" in edge_color[i // 3]:  # Dimmed edges
+    if "rgba(2, 8, 186, 0.8)" in edge_color[i // 3] or "rgba(217, 2, 117, 0.65)" in edge_color[i // 3]:
+        center_edges.append(trace)  # Center edges (to/from AUT)
+    elif "170, 170, 170" in edge_color[i // 3]:  # Dimmed edges
         dimmed_edge_traces.append(trace)
-    elif "darkblue" in edge_color[i // 3]:  # Center edges
-        center_edges.append(trace)
     else:  # Relevant edges
         relevant_edges.append(trace)
 
 # Define region colors
 region_colors = {
-    "Europa - Rest": "#abd0f5",
-    "Asien": "#ff7f0e",
-    "Afrika": "#2ca02c",
-    "Ozeanien": "#f25a78",
-    "Amerikas": "#9467bd",
-    "Europa - EU": "#057ef7",
+    "Asien"         : "#ff7f0e",
+    "Afrika"        : "#2ca02c",
+    "Ozeanien"      : "#f25a78",
+    "Amerikas"      : "#9467bd",
+    "Europa - EU"   : "#057ef7",
+    "Europa - Rest" : "#abd0f5",
 }
 
 # Node trace with actual country names and ISO3 labels
@@ -271,6 +270,7 @@ for node in G.nodes():
     exports = df_product[df_product['from'] == node]['value'].sum()
     exports_to_center = df_product[(df_product['from'] == node) & (df_product['to'] == center_country)]['value'].sum()
     exports_share = (exports_to_center / exports * 100) if exports > 0 else 0
+    
     subset = df_product[df_product['from'] == node]
     if not subset.empty:
         row = subset.iloc[0]
@@ -425,7 +425,7 @@ with col3:
     fig1 = go.Figure()
 
     # Add box plot for hub values
-    if metric_type == "Ungewichtet mit Länderrisiko":
+    if metric_type == "Ströme":
         hub_values = plot_df["Raw Hub Score"].dropna().tolist()
         # Extract Austria's hub score using .loc[]
         if "AUT" in plot_df["Country"].values:
@@ -507,7 +507,7 @@ with col3:
     # Render the plot
     st.plotly_chart(fig1, use_container_width=True)
 
-        # Build and render figure
+    # Build and render figure
     with col2:
         # Add traces in the desired order: dimmed -> relevant -> center
         fig = go.Figure(
