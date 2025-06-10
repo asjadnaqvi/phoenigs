@@ -6,8 +6,9 @@ import plotly.graph_objects as go
 import openpyxl  
 import math
 from scipy import stats 
-import locale
-locale.setlocale(locale.LC_ALL, 'de_DE.UTF-8')
+
+# import locale # does not work on streamlit cloud
+# locale.setlocale(locale.LC_ALL, 'de_DE.UTF-8')
 
 def load_data():
     df = pd.read_csv("baci_hs22_2023.csv")
@@ -284,7 +285,8 @@ for node in G.nodes():
         name = row["ex_name"] if "ex_name" in row else node
         iso3_code = row["ex_iso3"] if "ex_iso3" in row else node
         region = row["ex_region"] if "ex_region" in row else "Other"
-        risk_display = locale.format_string('%.2f', row["ps_norm"]) if "ps_norm" in row and not pd.isna(row["ps_norm"]) else "N/A"
+        risk_display = f"{row['ps_norm']:.2f}" if "ps_norm" in row and not pd.isna(row["ps_norm"]) else "N/A"
+        # risk_display = locale.format_string('%.2f', row["ps_norm"]) if "ps_norm" in row and not pd.isna(row["ps_norm"]) else "N/A"
     else:
         name = node
         iso3_code = node
@@ -295,10 +297,13 @@ for node in G.nodes():
     node_color.append(region_colors.get(region, "lightgray"))
     label = (
         f"{name} ({iso3_code})<br>"
-        f"Exporte - Gesamt: Tsd. EUR {locale.format_string('%.0f', exports, grouping=True)}<br>"
-        f"Exporte - {center_country}: Tsd. EUR {locale.format_string('%.0f', exports_to_center, grouping=True)} ({locale.format_string('%.2f', exports_share, grouping=True)}%)<br>"
-
+        f"Exporte - Gesamt: Tsd. EUR {exports:,.0f}<br>"
+        f"Exporte - {center_country}: Tsd. EUR {exports_to_center:,.0f} ({exports_share:.2f}%)<br>"
         f"Risiko: {risk_display}"
+        # f"{name} ({iso3_code})<br>"
+        # f"Exporte - Gesamt: Tsd. EUR {locale.format_string('%.0f', exports, grouping=True)}<br>"
+        # f"Exporte - {center_country}: Tsd. EUR {locale.format_string('%.0f', exports_to_center, grouping=True)} ({locale.format_string('%.2f', exports_share, grouping=True)}%)<br>"
+        # f"Risiko: {risk_display}"
     )
     node_text.append(label)
 
