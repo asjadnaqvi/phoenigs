@@ -6,6 +6,8 @@ import plotly.graph_objects as go
 import openpyxl  
 import math
 from scipy import stats 
+import locale
+locale.setlocale(locale.LC_ALL, 'de_DE.UTF-8')
 
 def load_data():
     df = pd.read_csv("baci_hs22_2023.csv")
@@ -25,12 +27,13 @@ def load_data():
 
     # Load WGI and merge
     try:
-        wgi = pd.read_excel("wgirisk_2023.xlsx", engine="openpyxl")
+        wgi = pd.read_excel("gew_riskindi.xlsx", engine="openpyxl")
         wgi = wgi[["iso3", "risk"]].dropna()
         wgi["risk"] = pd.to_numeric(wgi["risk"], errors="coerce")
         min_risk, max_risk = wgi["risk"].min(), wgi["risk"].max()
         # wgi["ps_norm"] = 1 - ((wgi["risk"] + 2.7) / 5) ## philips formula
-        wgi["ps_norm"] = 1 - ((wgi["risk"] - min_risk) / (max_risk - min_risk))
+        wgi["ps_norm"] = wgi["risk"] # take the values as they are from Irene's file.
+        # wgi["ps_norm"] = 1 - ((wgi["risk"] - min_risk) / (max_risk - min_risk))
         df = df.merge(wgi[["iso3", "ps_norm"]], left_on="from", right_on="iso3", how="left")
     except Exception as e:
         st.warning(f"WGI data not found or failed to merge: {e}")
@@ -88,11 +91,15 @@ metric_type = col1.radio("Handelsverflechtungen", ["Ströme", "Länderrisiko-Amp
 # Filter data
 df_product = df[df["product"] == selected_product].copy()
 
+
+
 # Compute flow_weight and build graph before filtering by nodes for dropdown
 if metric_type == "Länderrisiko-Ampel" and "ps_norm" in df_product.columns:
     df_product["flow_weight"] = df_product["value"] * df_product["ps_norm"]
 else:
     df_product["flow_weight"] = df_product["value"]
+
+df_product["flow_weight"] = df_product["flow_weight"].fillna(0)  # ensure flow_weight is numeric and fill NaNs with 0
 
 edge_columns = ["flow_weight", "value"]
 if "ps_norm" in df_product.columns:
@@ -210,9 +217,9 @@ for edge in G.edges(data=True):
         edge_color.append("rgba(217, 2, 117, 0.65)")  # Dark blue for Austria raw flows
     
     elif metric_type == "Länderrisiko-Ampel" and isinstance(risk, (float, int)) and not pd.isna(risk) and is_relevant:
-        if risk < 0.25:
+        if risk < 40: # min risk
             edge_color.append("rgba(0, 200, 0, 0.7)") # green
-        elif risk < 0.6:
+        elif risk < 65: # max risk
             edge_color.append("rgba(255, 215, 0, 0.7)") # yellow
         else:
             edge_color.append("rgba(255, 0, 0, 0.7)") # red
@@ -221,7 +228,7 @@ for edge in G.edges(data=True):
     else:
         edge_color.append(f"rgba(170, 170, 170, {dim_opacity})")  # dimmed edges for unrelated flows
     try:
-        risk_display = f"{float(risk):.2f}"
+        risk_display = f"{float(risk):,.2f}"
     except:
         risk_display = "N/A"
     edge_hover.append(f"{edge[0]} → {edge[1]}<br>Werte: {weight:,.0f}<br>Risiko: {risk_display}")
@@ -277,7 +284,7 @@ for node in G.nodes():
         name = row["ex_name"] if "ex_name" in row else node
         iso3_code = row["ex_iso3"] if "ex_iso3" in row else node
         region = row["ex_region"] if "ex_region" in row else "Other"
-        risk_display = f"{row['ps_norm']:.2f}" if "ps_norm" in row and not pd.isna(row["ps_norm"]) else "N/A"
+        risk_display = locale.format_string('%.2f', row["ps_norm"]) if "ps_norm" in row and not pd.isna(row["ps_norm"]) else "N/A"
     else:
         name = node
         iso3_code = node
@@ -288,8 +295,9 @@ for node in G.nodes():
     node_color.append(region_colors.get(region, "lightgray"))
     label = (
         f"{name} ({iso3_code})<br>"
-        f"Exporte - Gesamt: Tsd. EUR {exports:,.0f}<br>"
-        f"Exporte - {center_country}: Tsd. EUR {exports_to_center:,.0f} ({exports_share:.2f}%)<br>"
+        f"Exporte - Gesamt: Tsd. EUR {locale.format_string('%.0f', exports, grouping=True)}<br>"
+        f"Exporte - {center_country}: Tsd. EUR {locale.format_string('%.0f', exports_to_center, grouping=True)} ({locale.format_string('%.2f', exports_share, grouping=True)}%)<br>"
+
         f"Risiko: {risk_display}"
     )
     node_text.append(label)
@@ -300,7 +308,7 @@ for node in G.nodes():
     node_size.append(size)
 
 # Highlight Austria
-highlight_color = "tomato"
+highlight_color = "red"
 node_color = [highlight_color if lbl.startswith("Austria") or "AUT" in lbl else region_colors.get(region, "lightgray") for lbl, region in zip(node_label, node_region)]
 
 node_trace = go.Scatter(
@@ -343,6 +351,38 @@ for region, color in sorted_regions:
         )
     )
 
+# Add risk threshold legend entries
+if metric_type == "Länderrisiko-Ampel":
+    region_traces += [
+        go.Scatter(     # Blank entry for spacing
+            x=[None], y=[None],
+            mode='markers',
+            marker=dict(size=0, color='rgba(0,0,0,0)'),
+            name=" ", 
+            showlegend=True
+        ),
+        go.Scatter(
+            x=[None], y=[None],
+            mode='lines',
+            line=dict(color="rgba(0, 200, 0, 0.7)", width=2.5),
+            name="Risiko = 0-40",
+            showlegend=True
+        ),
+        go.Scatter(
+            x=[None], y=[None],
+            mode='lines',
+            line=dict(color="rgba(255, 215, 0, 0.7)", width=2.5),
+            name="Risiko = 40–65",
+            showlegend=True
+        ),
+        go.Scatter(
+            x=[None], y=[None],
+            mode='lines',
+            line=dict(color="rgba(255, 0, 0, 0.7)", width=2.5),
+            name="Risiko = 65-100",
+            showlegend=True
+        ),
+    ]
 
 
 # --- Calculate and display hub scores ---
@@ -485,13 +525,13 @@ with col3:
                 x=[""],
                 mode='markers',
                 name='Österreich',
-                marker=dict(color='tomato', symbol='circle', size=15)
+                marker=dict(color='red', symbol='circle', size=15)
             )
         )
 
     # Update layout
     fig1.update_layout(
-        title=dict(text=f"Abhängigkeitsindex ({metric_type}): <br>{selected_label}", font=dict(size=16)),
+        title=dict(text=f"Abhängigkeitsindex ({metric_type}): <br>{selected_label}", font=dict(size=14)),
         yaxis_title="Werte",
         height=600,
         margin=dict(l=20, r=20, t=40, b=20),
@@ -513,7 +553,7 @@ with col3:
         fig = go.Figure(
             data=dimmed_edge_traces + relevant_edges + center_edges + [node_trace] + region_traces,
             layout=go.Layout(
-                title=dict(text=f"Direkte und indirekte Handelsverflechtungen ({metric_type}): <br>{selected_label}", font=dict(size=16)),
+                title=dict(text=f"Direkte und indirekte Handelsverflechtungen ({metric_type}): {selected_label}", font=dict(size=14)),
                 showlegend=True,  # Enable legend
                 hovermode='closest',
                 height=800,
