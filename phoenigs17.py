@@ -33,7 +33,7 @@ def load_data():
         wgi["risk"] = pd.to_numeric(wgi["risk"], errors="coerce")
         min_risk, max_risk = wgi["risk"].min(), wgi["risk"].max()
         # wgi["ps_norm"] = 1 - ((wgi["risk"] + 2.7) / 5) ## philips formula
-        wgi["ps_norm"] = wgi["risk"] # take the values as they are from Irene's file.
+        wgi["ps_norm"] = wgi["risk"] / 100 # take the values as they are from Irene's file.
         # wgi["ps_norm"] = 1 - ((wgi["risk"] - min_risk) / (max_risk - min_risk))
         df = df.merge(wgi[["iso3", "ps_norm"]], left_on="from", right_on="iso3", how="left")
     except Exception as e:
@@ -164,21 +164,10 @@ if center_country in G:
     for i, node in enumerate(outer_circle):
         angle = 360 * i / max(1, len(outer_circle))
         pos[node] = polar_to_cartesian(3.0, angle)
+    
+    
     keep_nodes = set(df_product["from"]).union(df_product["to"])
     df_product = df_product[df_product["from"].isin(keep_nodes) & df_product["to"].isin(keep_nodes)]
-
-    def polar_to_cartesian(radius, angle_deg):
-        angle_rad = math.radians(angle_deg)
-        return radius * math.cos(angle_rad), radius * math.sin(angle_rad)
-
-    pos = {}
-    pos[center] = (0, 0)
-    for i, node in enumerate(inner_circle):
-        angle = 360 * i / max(1, len(inner_circle))
-        pos[node] = polar_to_cartesian(1.5, angle)
-    for i, node in enumerate(outer_circle):
-        angle = 360 * i / max(1, len(outer_circle))
-        pos[node] = polar_to_cartesian(3.0, angle)
     
 
 # Edge data
@@ -215,12 +204,12 @@ for edge in G.edges(data=True):
     if metric_type == "Ströme" and is_relevant and edge[1] == center:
         edge_color.append("rgba(2, 8, 186, 0.8)")  # Dark blue for Austria raw flows
     elif metric_type == "Ströme" and is_relevant and edge[0] == center:
-        edge_color.append("rgba(217, 2, 117, 0.65)")  # Dark blue for Austria raw flows
+        edge_color.append("rgba(217, 2, 117, 0.65)")  #  Magenta/pink for Austria raw flows
     
     elif metric_type == "Länderrisiko-Ampel" and isinstance(risk, (float, int)) and not pd.isna(risk) and is_relevant:
-        if risk < 40: # min risk
+        if risk < 0.4: # min risk
             edge_color.append("rgba(0, 200, 0, 0.7)") # green
-        elif risk < 65: # max risk
+        elif risk < 0.65: # max risk
             edge_color.append("rgba(255, 215, 0, 0.7)") # yellow
         else:
             edge_color.append("rgba(255, 0, 0, 0.7)") # red
@@ -342,7 +331,6 @@ filtered_region_colors = {region: color for region, color in region_colors.items
 sorted_regions = sorted(filtered_region_colors.items(), key=lambda x: x[0])
 
 # Add region legend
-# Add region legend
 region_traces = []
 for region, color in sorted_regions:
     region_traces.append(
@@ -353,11 +341,14 @@ for region, color in sorted_regions:
             marker=dict(size=15, color=color),
             name=region,  # Explicitly set the region name
             showlegend=True  # Ensure the legend is shown for active regions
+           
         )
     )
 
 # Add risk threshold legend entries
 if metric_type == "Länderrisiko-Ampel":
+    
+
     region_traces += [
         go.Scatter(     # Blank entry for spacing
             x=[None], y=[None],
@@ -370,24 +361,25 @@ if metric_type == "Länderrisiko-Ampel":
             x=[None], y=[None],
             mode='lines',
             line=dict(color="rgba(0, 200, 0, 0.7)", width=2.5),
-            name="Risiko = 0-40",
+            name="0 - 0.40",
             showlegend=True
         ),
         go.Scatter(
             x=[None], y=[None],
             mode='lines',
             line=dict(color="rgba(255, 215, 0, 0.7)", width=2.5),
-            name="Risiko = 40–65",
+            name="0.40 – 0.65",
             showlegend=True
         ),
         go.Scatter(
             x=[None], y=[None],
             mode='lines',
             line=dict(color="rgba(255, 0, 0, 0.7)", width=2.5),
-            name="Risiko = 65-100",
+            name="0.65 - 1",
             showlegend=True
         ),
     ]
+
 
 
 # --- Calculate and display hub scores ---
@@ -398,49 +390,113 @@ with col3:
     # st.write("Graph Nodes:", list(G.nodes))
     # st.write("Graph Edges:", list(G.edges(data=True)))
 
-    # Create raw and risk-weighted graphs
-    H_raw = G.copy()
-    for u, v, d in H_raw.edges(data=True):
-        d["weight"] = 1  # Raw Flow: All weights set to 1
-    hubs_raw = nx.hits(H_raw, normalized=True)[0]
+    # Calculate HITS on the full (unfiltered) network for normalization
+    
 
-    # Convert values to numpy array for min-max normalization
-    scores = np.array(list(hubs_raw.values()))
-    min_score = scores.min()
-    max_score = scores.max()
+    edge_columns_present = [col for col in edge_columns if col in df_product.columns]
 
-    if max_score != min_score:
-        hubs_raw = {k: 100 * (v - min_score) / (max_score - min_score) for k, v in hubs_raw.items()}
-    else:
-        hubs_raw = {k: 0 for k in hubs_raw}  # All values are the same    
+    G_full = nx.from_pandas_edgelist(
+        df_product,
+        source="from",
+        target="to",
+        edge_attr=edge_columns_present,
+        create_using=nx.DiGraph()
+    )    
 
-    H_risk = G.copy()
-    for u, v, d in H_risk.edges(data=True):
-        d["weight"] = d.get("flow_weight", 1)  # Risk-Weighted: Use flow_weight
-    hubs_risk = nx.hits(H_risk, normalized=True)[0]
 
-    # Convert values to numpy array for min-max normalization
-    scores = np.array(list(hubs_risk.values()))
-    min_score = scores.min()
-    max_score = scores.max()
+    # Raw HITS on full network
+    H_raw_full = G_full.copy()
+    for u, v, d in H_raw_full.edges(data=True):
+        d["weight"] = 1
+    hubs_raw_full = nx.hits(H_raw_full, normalized=True)[0]
 
-    if max_score != min_score:
-        hubs_risk = {k: 100 * (v - min_score) / (max_score - min_score) for k, v in hubs_risk.items()}
-    else:
-        hubs_risk = {k: 0 for k in hubs_risk}  # All values are the same    
+
+    # Risk-weighted HITS on full network
+    H_risk_full = G_full.copy()
+
+    for u, v, d in H_risk_full.edges(data=True):
+        value = d.get("value", 1)
+        ps_norm = d.get("ps_norm", 1)
+        if pd.isna(ps_norm):
+            ps_norm = 0
+        d["weight"] = value * ps_norm
+
+    #for u, v, d in H_risk_full.edges(data=True):
+    #    d["weight"] = d["flow_weight"] if "flow_weight" in d else 1
+    
+    hubs_risk_full = nx.hits(H_risk_full, normalized=True)[0]
+    # hubs_risk_full = nx.hits(H_raw_full, normalized=True, weight="ps_norm")[0]
+
+
+    #for u, v, d in H_risk_full.edges(data=True):
+    #    print(f"{u} -> {v}: weight={d.get('weight')}, flow_weight={d.get('flow_weight')}")
+
+    #for u, v, d in H_risk_full.edges(data=True):
+    #    print(f"{u} -> {v}: flow_weight={d.get('flow_weight')}, wgi_risk={d.get('wgi_risk')}")
+
+    #for u, v, d in H_risk_full.edges(data=True):
+    #    print(f"{u} -> {v}: ps_norm={d.get('ps_norm')}")
+
+
+    # Import perspective (reverse) on full network
+    H_raw_import_full = H_raw_full.reverse(copy=True)
+    hubs_raw_import_full = nx.hits(H_raw_import_full, normalized=True)[0]
+
+    H_risk_import_full = H_risk_full.reverse(copy=True)
+    hubs_risk_import_full = nx.hits(H_risk_import_full, normalized=True)[0]
+
+
+    # Normalize on the full network
+    def normalize_dict(d):
+        vals = np.array(list(d.values()))
+        min_score = 0 #vals.min()
+        max_score = vals.max()
+        if max_score != min_score:
+            # return {k: 100 * (v - min_score) / (max_score - min_score) for k, v in d.items()}
+
+            return {k: 100 * (v) for k, v in d.items()}
+        else:
+            return {k: 0 for k in d}    
+        
+
+    #hubs_raw_full = normalize_dict(hubs_raw_full)
+    #hubs_risk_full = normalize_dict(hubs_risk_full)
+    hubs_raw_import_full = normalize_dict(hubs_raw_import_full)
+    hubs_risk_import_full = normalize_dict(hubs_risk_import_full)
 
 
     # Filter EU nodes
     eu_nodes = [n for n in G.nodes if df[df["to"] == n]["eu"].any()]
     # st.write("EU Nodes:", eu_nodes)  # Debug: Check EU nodes
 
-    # Extract hub scores for EU nodes
-    hub_raw_vals  = [hubs_raw.get(n, np.nan) for n in eu_nodes]
-    hub_risk_vals = [hubs_risk.get(n, np.nan) for n in eu_nodes]
+    
+    # Add radio button for direction selection
+    #direction = col1.radio(
+    #    "Perspektive für HITS-Berechnung:",
+    #    ["Export-Sicht (Österreich als Exporteur)", "Import-Sicht (Österreich als Importeur)"],
+    #    index=0
+    #)
+
+    # Extract hub scores for EU nodes based on direction, but normalized on the full network
+    #if direction == "Export-Sicht (Österreich als Exporteur)":
+    #    hub_raw_vals  = [hubs_raw_full.get(n, np.nan) for n in eu_nodes]
+    #    hub_risk_vals = [hubs_risk_full.get(n, np.nan) for n in eu_nodes]
+    #else:
+    hub_raw_vals  = [hubs_raw_import_full.get(n, np.nan) for n in eu_nodes]
+    hub_risk_vals = [hubs_risk_import_full.get(n, np.nan) for n in eu_nodes]
+
+
+
 
     # Debug: Check extracted hub scores
     #st.write("Hub Raw Values:", hub_raw_vals)
     #st.write("Hub Risk Values:", hub_risk_vals)
+
+    #for n, v in zip(eu_nodes, hub_raw_vals):
+    #    print(f"{n}: {v}")
+    
+    #for n, v in zip(eu_nodes, hub_risk_vals):
+    #    print(f"{n}: {v}")   
 
     # Create DataFrame for plotting
     plot_df = pd.DataFrame({
@@ -471,14 +527,28 @@ with col3:
 
     # Add box plot for hub values
     if metric_type == "Ströme":
-        hub_values = plot_df["Raw Hub Score"].dropna().tolist()
+
+        #eu_hub_raw_vals = [hub_raw_vals[eu_nodes.index(n)] for n in eu_nodes if n in eu_nodes and not pd.isna(hub_raw_vals[eu_nodes.index(n)])]
+
+        aut = hub_raw_vals[eu_nodes.index("AUT")] if "AUT" in eu_nodes else np.nan
+        # hub_values = plot_df[plot_df["Country"].isin(eu_nodes)]["Raw Hub Score"].dropna().tolist()
+
         # Extract Austria's hub score using .loc[]
-        if "AUT" in plot_df["Country"].values:
-            aut = plot_df.loc[plot_df["Country"] == "AUT", "Raw Hub Score"].values[0]
-        else:
-            aut = np.nan
+        #if "AUT" in eu_plot_df["Country"].values:
+        #    aut = eu_plot_df.loc[eu_plot_df["Country"] == "AUT", "Raw Hub Score"].values[0]
+        #else:
+        #    aut = np.nan
+
 
         avg = np.nanmean(hub_raw_vals)
+
+        #print("Average Hub Score (Un-weighted):", avg)  # Debug: Check average hub score
+        #print("AUT Hub Score (Un-weighted):", aut)  # Debug: Check average hub score
+
+
+        # Set y-axis range based only on EU node values
+        y_min = np.nanmin(hub_raw_vals)
+        y_max = np.nanmax(hub_raw_vals)
 
         fig1.add_trace(
             go.Box(
@@ -487,7 +557,8 @@ with col3:
                 boxpoints=False,  # Disable outliers
                 #boxpoints='outliers',
                 marker_color='#aaacad',
-                showlegend=False
+                showlegend=False,
+                hoverinfo='skip'
             )
         )
     else:
@@ -500,14 +571,25 @@ with col3:
 
         avg = np.nanmean(hub_risk_vals)
 
+        #print("Average Hub Score (Risk-weighted):", avg)  # Debug: Check average hub score
+        #print("AUT Hub Score (Risk-weighted):", aut)  # Debug: Check average hub score
+
+        #y_min = np.nanmin(hub_values)
+        #y_max = np.nanmax(hub_values)
+
+
         fig1.add_trace(
             go.Box(
                 y=hub_risk_vals,
                 name="",
                 boxpoints=False,  # Disable outliers
-                # boxpoints='outliers',
+                #boxpoints='outliers',
                 marker_color='#aaacad',
-                showlegend=False
+                showlegend=False,
+                #hovertext=[f"{val:.3f}" for val in hub_risk_vals],  # Values with 3 decimals
+                #hoverinfo='text'
+                #hovertext=[f"Custom text: {val}" for val in hub_risk_vals],  # Custom hover text
+                hoverinfo='skip'  # Show only custom hover text
             )
         )    
 
@@ -518,25 +600,28 @@ with col3:
             x=[""],
             mode='markers',
             name='EU',
-            marker=dict(color='#057ef7', symbol='circle', size=15)
+            marker=dict(color='#057ef7', symbol='circle', size=15),
+            hovertemplate="%.3f" % avg  # Custom hover text with 3 decimals
         )
     )
 
     # Add scatter point for Austria's hub score
-    if not np.isnan(aut):  # Ensure Austria's hub score is valid
+    if not np.isnan(aut):
         fig1.add_trace(
             go.Scatter(
                 y=[aut],
                 x=[""],
                 mode='markers',
                 name='Österreich',
-                marker=dict(color='red', symbol='circle', size=15)
+                marker=dict(color='red', symbol='circle', size=15),
+                hovertemplate="%.3f" % aut  # Custom hover text with 3 decimals
             )
         )
 
     # Update layout
     fig1.update_layout(
         title=dict(text=f"Abhängigkeitsindex ({metric_type}): <br>{selected_label}", font=dict(size=14)),
+        # yaxis=dict(range=[y_min, y_max]),
         yaxis_title="Werte",
         height=600,
         margin=dict(l=20, r=20, t=40, b=20),
@@ -569,3 +654,35 @@ with col3:
         )
 
         st.plotly_chart(fig, use_container_width=True)
+
+
+        
+        # --- Add DataSheet at the bottom ---
+
+        displayed_countries = sorted(list(G.nodes))
+
+        df_datasheet = pd.DataFrame({
+            "Country": displayed_countries,
+            "EU27": ["✅" if n in eu_nodes else "" for n in displayed_countries],
+            "Normal Value": [df_product[df_product["to"] == n]["value"].sum() if n in df_product["to"].values else np.nan for n in displayed_countries],
+            "Risk-weighted Value": [
+                (df_product[df_product["to"] == n].apply(lambda row: row["value"] * (row["ps_norm"] if not pd.isna(row["ps_norm"]) else 0), axis=1).sum())
+                if "ps_norm" in df_product.columns and n in df_product["to"].values else np.nan
+                for n in displayed_countries
+            ],
+            "Raw Hub Score": [hubs_raw_import_full.get(n, np.nan) for n in displayed_countries],
+            "Risk-weighted Hub Score": [hubs_risk_import_full.get(n, np.nan) for n in displayed_countries],
+            #"ps_norm risk value": [
+            #    df_product[df_product["from"] == n]["ps_norm"].iloc[0] if "ps_norm" in df_product.columns and n in df_product["from"].values and len(df_product[df_product["from"] == n]["ps_norm"]) > 0 else np.nan
+            #    for n in displayed_countries
+            #],
+
+        })
+
+
+        st.markdown("### Übersicht aller Länder (normalisiert am Gesamtnetz)")
+        st.dataframe(df_datasheet, hide_index=True)
+
+
+# eu_hub_raw_vals = [hub_raw_vals[eu_nodes.index(n)] for n in eu_nodes if n in eu_nodes and not pd.isna(hub_raw_vals[eu_nodes.index(n)])]
+# print("Min (EU, unweighted):", np.nanmin(eu_hub_raw_vals), "Max (EU, unweighted):", np.nanmax(eu_hub_raw_vals))
