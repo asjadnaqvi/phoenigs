@@ -3,12 +3,87 @@ import pandas as pd
 import networkx as nx
 import numpy as np
 import plotly.graph_objects as go
+# import plotly.figure_factory as ff
 import openpyxl  
 import math
 from scipy import stats 
 
 # import locale # does not work on streamlit cloud
 # locale.setlocale(locale.LC_ALL, 'de_DE.UTF-8')
+
+## ADD PRODUCT: 251010, 310540  
+
+# Custom HITS algorithm implementation
+
+def hits_iterative(
+    adj_matrix,
+    country_names=None,
+    max_iter=10,
+    tol=1e-6,
+    node_weights=None,
+    return_all=True
+):
+    """
+    Manual HITS algorithm, with optional node (country) weights applied at each iteration.
+    
+    Parameters:
+        adj_matrix (np.ndarray or pd.DataFrame): Adjacency matrix (import dependencies).
+        country_names (list): Optional list of country names for labeling.
+        max_iter (int): Maximum number of iterations.
+        tol (float): Convergence tolerance.
+        node_weights (pd.Series or array): Optional vector of length n for node-specific multipliers.
+        return_all (bool): If True, returns per-iteration DataFrames.
+        
+    Returns:
+        history (list): List of DataFrames with scores at each iteration.
+        or
+        final_hub, final_authority (pd.Series): Final scores if return_all=False.
+    """
+    if isinstance(adj_matrix, pd.DataFrame):
+        A = adj_matrix.values
+        if country_names is None:
+            country_names = adj_matrix.index.tolist()
+    else:
+        A = adj_matrix
+        if country_names is None:
+            country_names = [f"Country {i}" for i in range(A.shape[0])]
+    n = len(country_names)
+    h = np.ones(n)
+    a = np.ones(n)
+    # Prepare node_weights vector
+    if node_weights is not None:
+        node_weights = np.array(node_weights)
+        if len(node_weights) != n:
+            raise ValueError("Length of node_weights must match number of countries.")
+    else:
+        node_weights = np.ones(n)
+    history = []
+    for i in range(max_iter):
+        a_new = A.T @ h
+        a_new = a_new * node_weights  # Node weights applied to authority
+        a_new = a_new / np.linalg.norm(a_new) if np.linalg.norm(a_new) else a_new
+        h_new = A @ a_new
+        h_new = h_new * node_weights  # Node weights applied to hub
+        h_new = h_new / np.linalg.norm(h_new) if np.linalg.norm(h_new) else h_new
+        # Store in DataFrame for this iteration
+        df = pd.DataFrame({
+            "Hub": h_new,
+            "Authority": a_new
+        }, index=country_names)
+        df["Iteration"] = i + 1
+        history.append(df)
+        # Convergence check
+        if np.linalg.norm(h - h_new) < tol and np.linalg.norm(a - a_new) < tol:
+            break
+        h, a = h_new, a_new
+    if return_all:
+        return history  # List of DataFrames for each iteration
+    else:
+        return pd.Series(h, index=country_names, name="Hub"), pd.Series(a, index=country_names, name="Authority")
+
+
+
+
 
 def load_data():
     df = pd.read_csv("baci_hs22_2023.csv")
@@ -60,11 +135,10 @@ st.set_page_config(layout="wide")
 header_col1, header_col2 = st.columns([8, 1])
 
 with header_col1:
-    st.header("Dashboard zu den Abhängigkeiten Österreichs im internationalen Handelsnetzwerk")   ## dashboard title
+    st.header("Abhängigkeiten Österreichs im internationalen Handelsnetzwerk")   ## dashboard title
 
 with header_col2:
     st.image("Logo.jpg", width=100)
-
 
 
 col1, col2, col3 = st.columns([1, 4, 1])
@@ -106,8 +180,10 @@ edge_columns = ["flow_weight", "value"]
 if "ps_norm" in df_product.columns:
     edge_columns.append("ps_norm")
 
+
+
 # Drop zero-flow edges
-df_product = df_product[df_product["flow_weight"] > 0]
+#df_product = df_product[df_product["flow_weight"] > 0]
 
 G = nx.from_pandas_edgelist(
     df_product,
@@ -117,7 +193,11 @@ G = nx.from_pandas_edgelist(
     create_using=nx.DiGraph()
 )
 
+
+
 center_country = "AUT"  # Fixed focus country
+
+
 
 # Recenter and relayer nodes around selected country
 if center_country in G:
@@ -165,10 +245,20 @@ if center_country in G:
         angle = 360 * i / max(1, len(outer_circle))
         pos[node] = polar_to_cartesian(3.0, angle)
     
-    
+
     keep_nodes = set(df_product["from"]).union(df_product["to"])
     df_product = df_product[df_product["from"].isin(keep_nodes) & df_product["to"].isin(keep_nodes)]
     
+
+
+risk_threshold = col1.slider(
+    "Risk thresholds", 
+    min_value=0.0, 
+    max_value=1.0, 
+    value=(0.4, 0.65), 
+    step=0.05
+)
+
 
 # Edge data
 edge_x, edge_y, edge_width, edge_color, edge_hover = [], [], [], [], []
@@ -200,6 +290,8 @@ for edge in G.edges(data=True):
     is_relevant = edge[0] in important_nodes or edge[1] in important_nodes
 
 
+    min_risk, max_risk = risk_threshold
+
 
     if metric_type == "Ströme" and is_relevant and edge[1] == center:
         edge_color.append("rgba(2, 8, 186, 0.8)")  # Dark blue for Austria raw flows
@@ -207,9 +299,9 @@ for edge in G.edges(data=True):
         edge_color.append("rgba(217, 2, 117, 0.65)")  #  Magenta/pink for Austria raw flows
     
     elif metric_type == "Länderrisiko-Ampel" and isinstance(risk, (float, int)) and not pd.isna(risk) and is_relevant:
-        if risk < 0.4: # min risk
+        if risk < min_risk: # min risk
             edge_color.append("rgba(0, 200, 0, 0.7)") # green
-        elif risk < 0.65: # max risk
+        elif risk < max_risk: # max risk
             edge_color.append("rgba(255, 215, 0, 0.7)") # yellow
         else:
             edge_color.append("rgba(255, 0, 0, 0.7)") # red
@@ -289,10 +381,6 @@ for node in G.nodes():
         f"Exporte - Gesamt: Tsd. EUR {exports:,.0f}<br>"
         f"Exporte - {center_country}: Tsd. EUR {exports_to_center:,.0f} ({exports_share:.2f}%)<br>"
         f"Risiko: {risk_display}"
-        # f"{name} ({iso3_code})<br>"
-        # f"Exporte - Gesamt: Tsd. EUR {locale.format_string('%.0f', exports, grouping=True)}<br>"
-        # f"Exporte - {center_country}: Tsd. EUR {locale.format_string('%.0f', exports_to_center, grouping=True)} ({locale.format_string('%.2f', exports_share, grouping=True)}%)<br>"
-        # f"Risiko: {risk_display}"
     )
     node_text.append(label)
 
@@ -347,8 +435,6 @@ for region, color in sorted_regions:
 
 # Add risk threshold legend entries
 if metric_type == "Länderrisiko-Ampel":
-    
-
     region_traces += [
         go.Scatter(     # Blank entry for spacing
             x=[None], y=[None],
@@ -361,37 +447,47 @@ if metric_type == "Länderrisiko-Ampel":
             x=[None], y=[None],
             mode='lines',
             line=dict(color="rgba(0, 200, 0, 0.7)", width=2.5),
-            name="0 - 0.40",
+            name=f"0 – {min_risk:.2f}",
             showlegend=True
         ),
         go.Scatter(
             x=[None], y=[None],
             mode='lines',
             line=dict(color="rgba(255, 215, 0, 0.7)", width=2.5),
-            name="0.40 – 0.65",
+            name=f"{min_risk:.2f} – {max_risk:.2f}",
             showlegend=True
         ),
         go.Scatter(
             x=[None], y=[None],
             mode='lines',
             line=dict(color="rgba(255, 0, 0, 0.7)", width=2.5),
-            name="0.65 - 1",
+            name=f"{max_risk:.2f} – 1",
             showlegend=True
         ),
     ]
 
 
+# Build and render figure
+with col2:
+    # Add traces in the desired order: dimmed -> relevant -> center
+    fig = go.Figure(
+        data=dimmed_edge_traces + relevant_edges + center_edges + [node_trace] + region_traces,
+        layout=go.Layout(
+            title=dict(text=f"Direkte und indirekte Handelsverflechtungen ({metric_type}): {selected_label}", font=dict(size=14)),
+            showlegend=True,  # Enable legend
+            hovermode='closest',
+            height=800,
+            margin=dict(b=20, l=5, r=5, t=40),
+            xaxis=dict(showgrid=False, zeroline=False, visible=False),
+            yaxis=dict(showgrid=False, zeroline=False, visible=False)
+        )
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
 
 # --- Calculate and display hub scores ---
 with col3:
-    # st.subheader("Hub Scores for EU")
-    
-    # Debug: Check the graph before applying HITS
-    # st.write("Graph Nodes:", list(G.nodes))
-    # st.write("Graph Edges:", list(G.edges(data=True)))
-
-    # Calculate HITS on the full (unfiltered) network for normalization
-    
 
     edge_columns_present = [col for col in edge_columns if col in df_product.columns]
 
@@ -404,285 +500,129 @@ with col3:
     )    
 
 
-    # Raw HITS on full network
-    H_raw_full = G_full.copy()
-    for u, v, d in H_raw_full.edges(data=True):
-        d["weight"] = 1
-    hubs_raw_full = nx.hits(H_raw_full, normalized=True)[0]
 
-
-    # Risk-weighted HITS on full network
-    H_risk_full = G_full.copy()
-
-    for u, v, d in H_risk_full.edges(data=True):
-        value = d.get("value", 1)
-        ps_norm = d.get("ps_norm", 1)
-        if pd.isna(ps_norm):
-            ps_norm = 0
-        d["weight"] = value * ps_norm
-
-    #for u, v, d in H_risk_full.edges(data=True):
-    #    d["weight"] = d["flow_weight"] if "flow_weight" in d else 1
+    # old code block
+    adj_df = nx.to_pandas_adjacency(G_full).copy() 
     
-    hubs_risk_full = nx.hits(H_risk_full, normalized=True)[0]
-    # hubs_risk_full = nx.hits(H_raw_full, normalized=True, weight="ps_norm")[0]
+    ## new code block
+    #adj_df = nx.to_pandas_adjacency(G_full, weight="value").copy()
+    
+    ### either normalize by column sum
+    #col_sums = adj_df.sum(axis=0)
+    #adj_df = adj_df.div(col_sums.replace(0, np.nan), axis=1).fillna(0)
 
-
-    #for u, v, d in H_risk_full.edges(data=True):
-    #    print(f"{u} -> {v}: weight={d.get('weight')}, flow_weight={d.get('flow_weight')}")
-
-    #for u, v, d in H_risk_full.edges(data=True):
-    #    print(f"{u} -> {v}: flow_weight={d.get('flow_weight')}, wgi_risk={d.get('wgi_risk')}")
-
-    #for u, v, d in H_risk_full.edges(data=True):
-    #    print(f"{u} -> {v}: ps_norm={d.get('ps_norm')}")
-
-
-    # Import perspective (reverse) on full network
-    H_raw_import_full = H_raw_full.reverse(copy=True)
-    hubs_raw_import_full = nx.hits(H_raw_import_full, normalized=True)[0]
-
-    H_risk_import_full = H_risk_full.reverse(copy=True)
-    hubs_risk_import_full = nx.hits(H_risk_import_full, normalized=True)[0]
-
-
-    # Normalize on the full network
-    def normalize_dict(d):
-        vals = np.array(list(d.values()))
-        min_score = 0 #vals.min()
-        max_score = vals.max()
-        if max_score != min_score:
-            # return {k: 100 * (v - min_score) / (max_score - min_score) for k, v in d.items()}
-
-            return {k: 100 * (v) for k, v in d.items()}
-        else:
-            return {k: 0 for k in d}    
-        
-
-    #hubs_raw_full = normalize_dict(hubs_raw_full)
-    #hubs_risk_full = normalize_dict(hubs_risk_full)
-    hubs_raw_import_full = normalize_dict(hubs_raw_import_full)
-    hubs_risk_import_full = normalize_dict(hubs_risk_import_full)
-
-
-    # Filter EU nodes
-    eu_nodes = [n for n in G.nodes if df[df["to"] == n]["eu"].any()]
-    # st.write("EU Nodes:", eu_nodes)  # Debug: Check EU nodes
+    ### or normalize by max value
+    #max_val = adj_df.values.max()
+    #if max_val > 0:
+    #    adj_df = (adj_df / max_val) 
 
     
-    # Add radio button for direction selection
-    #direction = col1.radio(
-    #    "Perspektive für HITS-Berechnung:",
-    #    ["Export-Sicht (Österreich als Exporteur)", "Import-Sicht (Österreich als Importeur)"],
-    #    index=0
-    #)
 
-    # Extract hub scores for EU nodes based on direction, but normalized on the full network
-    #if direction == "Export-Sicht (Österreich als Exporteur)":
-    #    hub_raw_vals  = [hubs_raw_full.get(n, np.nan) for n in eu_nodes]
-    #    hub_risk_vals = [hubs_risk_full.get(n, np.nan) for n in eu_nodes]
-    #else:
-    hub_raw_vals  = [hubs_raw_import_full.get(n, np.nan) for n in eu_nodes]
-    hub_risk_vals = [hubs_risk_import_full.get(n, np.nan) for n in eu_nodes]
+    country_names = adj_df.index.tolist()
+
+    # Unweighted HITS
+    hits_history_raw = hits_iterative(
+        adj_matrix=adj_df,
+        country_names=country_names,
+        max_iter=5,
+        tol=1e-6,
+        node_weights=None,
+        return_all=True
+    )
 
 
 
+    hubs_direct_raw = hits_history_raw[0]["Hub"].to_dict()
+    hubs_indirect_raw = hits_history_raw[4]["Hub"].to_dict()
 
-    # Debug: Check extracted hub scores
-    #st.write("Hub Raw Values:", hub_raw_vals)
-    #st.write("Hub Risk Values:", hub_risk_vals)
+    # Risk-weighted HITS
+    node_weights = None
+    if "ps_norm" in df_product.columns:
+        node_weights_series = df_product.groupby("from")["ps_norm"].mean()
+        node_weights = node_weights_series.reindex(country_names).fillna(1).values
 
-    #for n, v in zip(eu_nodes, hub_raw_vals):
-    #    print(f"{n}: {v}")
-    
-    #for n, v in zip(eu_nodes, hub_risk_vals):
-    #    print(f"{n}: {v}")   
+    hits_history_risk = hits_iterative(
+        adj_matrix=adj_df,
+        country_names=country_names,
+        max_iter=5,
+        tol=1e-6,
+        node_weights=node_weights,
+        return_all=True
+    )
+    hubs_direct_risk = hits_history_risk[0]["Hub"].to_dict()
+    hubs_indirect_risk = hits_history_risk[4]["Hub"].to_dict()
 
-    # Create DataFrame for plotting
-    plot_df = pd.DataFrame({
-        "Country": eu_nodes,
-        "Raw Hub Score": hub_raw_vals,
-        "Risk-weighted Hub Score": hub_risk_vals
-    }).sort_values("Country")
+    # Multiply hub scores by 10 for better readability
+    hubs_direct_raw    = {k: v * 10 for k, v in hubs_direct_raw.items()}
+    hubs_direct_risk   = {k: v * 10 for k, v in hubs_direct_risk.items()}
+    hubs_indirect_raw  = {k: v * 10 for k, v in hubs_indirect_raw.items()}
+    hubs_indirect_risk = {k: v * 10 for k, v in hubs_indirect_risk.items()}
 
-    # Debug: Check the DataFrame
-    # st.write("Plot DataFrame:", plot_df)
 
-    # Debug: Check Austria's hub score
-    # st.write("Austria Row in DataFrame:", plot_df[plot_df["Country"] == "AUT"])
-    # st.write("Extracted Austria Hub Score (Raw):", plot_df.loc[plot_df["Country"] == "AUT", "Raw Hub Score"].values)
-    # st.write("Extracted Austria Hub Score (Risk-Weighted):", plot_df.loc[plot_df["Country"] == "AUT", "Risk-weighted Hub Score"].values)
-    # st.write("Is Austria in EU Nodes:", "AUT" in eu_nodes)
-    # st.write("Hub Values List:", hub_values)
-    
-    # Handle empty hub values
-    if not hub_raw_vals:  # Check if the list is empty
-        st.warning("No valid hub scores available for the selected metric.")
-        hub_raw_vals = [0]  # Placeholder to avoid errors
-
-    # st.write("Average Hub Score:", avg)  # Debug: Check average hub score
-    # st.write("Austria Hub Score:", aut)  # Debug: Check Austria's hub score
-
-    fig1 = go.Figure()
-
-    # Add box plot for hub values
     if metric_type == "Ströme":
-
-        #eu_hub_raw_vals = [hub_raw_vals[eu_nodes.index(n)] for n in eu_nodes if n in eu_nodes and not pd.isna(hub_raw_vals[eu_nodes.index(n)])]
-
-        aut = hub_raw_vals[eu_nodes.index("AUT")] if "AUT" in eu_nodes else np.nan
-        # hub_values = plot_df[plot_df["Country"].isin(eu_nodes)]["Raw Hub Score"].dropna().tolist()
-
-        # Extract Austria's hub score using .loc[]
-        #if "AUT" in eu_plot_df["Country"].values:
-        #    aut = eu_plot_df.loc[eu_plot_df["Country"] == "AUT", "Raw Hub Score"].values[0]
-        #else:
-        #    aut = np.nan
-
-
-        avg = np.nanmean(hub_raw_vals)
-
-        #print("Average Hub Score (Un-weighted):", avg)  # Debug: Check average hub score
-        #print("AUT Hub Score (Un-weighted):", aut)  # Debug: Check average hub score
-
-
-        # Set y-axis range based only on EU node values
-        y_min = np.nanmin(hub_raw_vals)
-        y_max = np.nanmax(hub_raw_vals)
-
-        fig1.add_trace(
-            go.Box(
-                y=hub_raw_vals,
-                name="",
-                boxpoints=False,  # Disable outliers
-                #boxpoints='outliers',
-                marker_color='#aaacad',
-                showlegend=False,
-                hoverinfo='skip'
-            )
-        )
+        hubs_direct = hubs_direct_raw
+        hubs_indirect = hubs_indirect_raw
+        last_hubs = np.array(list(hubs_indirect_raw.values())) / 10
     else:
-        hub_values = plot_df["Risk-weighted Hub Score"].dropna().tolist()
-
-        if "AUT" in plot_df["Country"].values:
-            aut = plot_df.loc[plot_df["Country"] == "AUT", "Risk-weighted Hub Score"].values[0]
-        else:
-            aut = np.nan
-
-        avg = np.nanmean(hub_risk_vals)
-
-        #print("Average Hub Score (Risk-weighted):", avg)  # Debug: Check average hub score
-        #print("AUT Hub Score (Risk-weighted):", aut)  # Debug: Check average hub score
-
-        #y_min = np.nanmin(hub_values)
-        #y_max = np.nanmax(hub_values)
+        hubs_direct = hubs_direct_risk
+        hubs_indirect = hubs_indirect_risk
+        last_hubs = np.array(list(hubs_indirect_risk.values())) / 10
 
 
-        fig1.add_trace(
-            go.Box(
-                y=hub_risk_vals,
-                name="",
-                boxpoints=False,  # Disable outliers
-                #boxpoints='outliers',
-                marker_color='#aaacad',
-                showlegend=False,
-                #hovertext=[f"{val:.3f}" for val in hub_risk_vals],  # Values with 3 decimals
-                #hoverinfo='text'
-                #hovertext=[f"Custom text: {val}" for val in hub_risk_vals],  # Custom hover text
-                hoverinfo='skip'  # Show only custom hover text
-            )
-        )    
 
-    # Add scatter point for average hub score
-    fig1.add_trace(
-        go.Scatter(
-            y=[avg],
-            x=[""],
-            mode='markers',
-            name='EU',
-            marker=dict(color='#057ef7', symbol='circle', size=15),
-            hovertemplate="%.3f" % avg  # Custom hover text with 3 decimals
+
+    # Get top_n countries by direct hub score
+    top_countries = [c for c in inner_circle + outer_circle if c != "AUT"]
+    top_countries = sorted(top_countries, key=lambda c: hubs_direct.get(c, 0), reverse=True)[:10]
+    top_countries = top_countries[::-1]
+
+    # Prepare data for heatmap
+    z = [
+        [hubs_direct.get(c, 0), hubs_indirect.get(c, 0)] for c in top_countries
+    ]
+    x = ["Direkt", "Indirekt"]
+    y = top_countries
+    
+
+    # Create heatmap
+    fig_heatmap = go.Figure(
+        data=go.Heatmap(
+            z=z,
+            x=x,
+            y=y,
+            colorscale='Sunsetdark',
+            zmin=1,
+            zmax=6,
+            colorbar=dict(
+                title="Index",
+                tickvals=[1, 2, 3, 4, 5, 6],
+                ticktext=["1", "2", "3", "4", "5", "6"],  
+                thickness=15  # Adjust thickness as needed
+            ),
+            showscale=True,
+            text=[[f"{val:.2f}" for val in row] for row in z],
+            hoverinfo="text"
         )
     )
 
-    # Add scatter point for Austria's hub score
-    if not np.isnan(aut):
-        fig1.add_trace(
-            go.Scatter(
-                y=[aut],
-                x=[""],
-                mode='markers',
-                name='Österreich',
-                marker=dict(color='red', symbol='circle', size=15),
-                hovertemplate="%.3f" % aut  # Custom hover text with 3 decimals
+    # Add values as annotations in each heatmap box
+    for i, country in enumerate(y):
+        for j, col in enumerate(x):
+            fig_heatmap.add_annotation(
+                x=col,
+                y=country,
+                text=f"{z[i][j]:.2f}",
+                showarrow=False,
+                font=dict(color="black", size=14),
+                xanchor="center",
+                yanchor="middle"
             )
-        )
 
-    # Update layout
-    fig1.update_layout(
-        title=dict(text=f"Abhängigkeitsindex ({metric_type}): <br>{selected_label}", font=dict(size=14)),
-        # yaxis=dict(range=[y_min, y_max]),
-        yaxis_title="Werte",
-        height=600,
-        margin=dict(l=20, r=20, t=40, b=20),
-        legend=dict(
-            orientation="h",  # Horizontal legend
-            yanchor="bottom",
-            y=-0.2,  # Position below the plot
-            xanchor="center",
-            x=0.5
-        )
+    fig_heatmap.update_layout(
+        title=dict(text=f"Importrisikoindex (Top 10)", font=dict(size=14)),
+        height=600
     )
 
-    # Render the plot
-    st.plotly_chart(fig1, use_container_width=True)
-
-    # Build and render figure
-    with col2:
-        # Add traces in the desired order: dimmed -> relevant -> center
-        fig = go.Figure(
-            data=dimmed_edge_traces + relevant_edges + center_edges + [node_trace] + region_traces,
-            layout=go.Layout(
-                title=dict(text=f"Direkte und indirekte Handelsverflechtungen ({metric_type}): {selected_label}", font=dict(size=14)),
-                showlegend=True,  # Enable legend
-                hovermode='closest',
-                height=800,
-                margin=dict(b=20, l=5, r=5, t=40),
-                xaxis=dict(showgrid=False, zeroline=False, visible=False),
-                yaxis=dict(showgrid=False, zeroline=False, visible=False)
-            )
-        )
-
-        st.plotly_chart(fig, use_container_width=True)
-
-
+    st.plotly_chart(fig_heatmap, use_container_width=True)
         
-        # --- Add DataSheet at the bottom ---
 
-        displayed_countries = sorted(list(G.nodes))
-
-        df_datasheet = pd.DataFrame({
-            "Country": displayed_countries,
-            "EU27": ["✅" if n in eu_nodes else "" for n in displayed_countries],
-            "Normal Value": [df_product[df_product["to"] == n]["value"].sum() if n in df_product["to"].values else np.nan for n in displayed_countries],
-            "Risk-weighted Value": [
-                (df_product[df_product["to"] == n].apply(lambda row: row["value"] * (row["ps_norm"] if not pd.isna(row["ps_norm"]) else 0), axis=1).sum())
-                if "ps_norm" in df_product.columns and n in df_product["to"].values else np.nan
-                for n in displayed_countries
-            ],
-            "Raw Hub Score": [hubs_raw_import_full.get(n, np.nan) for n in displayed_countries],
-            "Risk-weighted Hub Score": [hubs_risk_import_full.get(n, np.nan) for n in displayed_countries],
-            #"ps_norm risk value": [
-            #    df_product[df_product["from"] == n]["ps_norm"].iloc[0] if "ps_norm" in df_product.columns and n in df_product["from"].values and len(df_product[df_product["from"] == n]["ps_norm"]) > 0 else np.nan
-            #    for n in displayed_countries
-            #],
-
-        })
-
-
-        st.markdown("### Übersicht aller Länder (normalisiert am Gesamtnetz)")
-        st.dataframe(df_datasheet, hide_index=True)
-
-
-# eu_hub_raw_vals = [hub_raw_vals[eu_nodes.index(n)] for n in eu_nodes if n in eu_nodes and not pd.isna(hub_raw_vals[eu_nodes.index(n)])]
-# print("Min (EU, unweighted):", np.nanmin(eu_hub_raw_vals), "Max (EU, unweighted):", np.nanmax(eu_hub_raw_vals))
