@@ -135,7 +135,7 @@ st.set_page_config(layout="wide")
 header_col1, header_col2 = st.columns([8, 1])
 
 with header_col1:
-    st.header("Abhängigkeiten Österreichs im internationalen Handelsnetzwerk")   ## dashboard title
+    st.header("Dashboard zu den Abhängigkeiten Österreichs im internationalen Handelsnetzwerk")   ## dashboard title
 
 with header_col2:
     st.image("Logo.jpg", width=100)
@@ -619,10 +619,40 @@ with col3:
             )
 
     fig_heatmap.update_layout(
-        title=dict(text=f"Importrisikoindex (Top 10)", font=dict(size=14)),
+        title=dict(text=f"Abhängigkeitsindex (Top 10)", font=dict(size=14)), # Importrisikoindex
         height=600
     )
 
     st.plotly_chart(fig_heatmap, use_container_width=True)
         
 
+        # --- Add DataSheet at the bottom ---
+
+# Filter EU nodes
+eu_nodes = [n for n in G.nodes if df[df["to"] == n]["eu"].any()]
+
+displayed_countries = sorted(list(G.nodes))
+
+df_datasheet = pd.DataFrame({
+    "Country": displayed_countries,
+    "EU27": ["✅" if n in eu_nodes else "" for n in displayed_countries],
+    "Trade value": [df_product[df_product["to"] == n]["value"].sum() if n in df_product["to"].values else np.nan for n in displayed_countries],
+    "Risk-weighted Value": [
+        (df_product[df_product["to"] == n].apply(lambda row: row["value"] * (row["ps_norm"] if not pd.isna(row["ps_norm"]) else 0), axis=1).sum())
+        if "ps_norm" in df_product.columns and n in df_product["to"].values else np.nan
+        for n in displayed_countries
+    ],
+    "Unweighted Hub Direct": [hubs_direct_raw.get(n, np.nan) for n in displayed_countries],
+    "Unweighted Hub Indirect": [hubs_indirect_raw.get(n, np.nan) for n in displayed_countries],
+    "Weighted Hub Direct": [hubs_direct_risk.get(n, np.nan) for n in displayed_countries],
+    "Weighted Hub Indirect": [hubs_indirect_risk.get(n, np.nan) for n in displayed_countries],
+    #"ps_norm risk value": [
+    #    df_product[df_product["from"] == n]["ps_norm"].iloc[0] if "ps_norm" in df_product.columns and n in df_product["from"].values and len(df_product[df_product["from"] == n]["ps_norm"]) > 0 else np.nan
+    #    for n in displayed_countries
+    #],
+
+})
+
+
+st.markdown("### Übersicht aller Länder (normalisiert am Gesamtnetz)")
+st.dataframe(df_datasheet, hide_index=True)
