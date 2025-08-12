@@ -137,14 +137,13 @@ header_col1, header_col2 = st.columns([8, 1])
 with header_col1:
     st.header("Dashboard zu den Abhängigkeiten Österreichs im internationalen Handelsnetzwerk")   ## dashboard title
 
-with header_col2:
-    st.image("Logo.jpg", width=100)
-
+# with header_col2:
+#   st.image("Logo.jpg", width=100)
 
 col1, col2, col3 = st.columns([1, 4, 1])
 
 # with col1:
-    # st.title("Product network")
+#   st.title("Product network")
 
 # Load data
 df = load_data()
@@ -181,7 +180,6 @@ if "ps_norm" in df_product.columns:
     edge_columns.append("ps_norm")
 
 
-
 # Drop zero-flow edges
 #df_product = df_product[df_product["flow_weight"] > 0]
 
@@ -193,10 +191,7 @@ G = nx.from_pandas_edgelist(
     create_using=nx.DiGraph()
 )
 
-
-
 center_country = "AUT"  # Fixed focus country
-
 
 
 # Recenter and relayer nodes around selected country
@@ -209,7 +204,7 @@ if center_country in G:
 
     min_width   = 0.3   # Set in code
     max_width   = 8     # Set in code
-    dim_opacity = 0.1  # Set in code
+    dim_opacity = 0.1   # Set in code
 
     # new code
     top_flows_df = df_product[df_product['to'] == center].nlargest(top_n, 'value')
@@ -225,6 +220,10 @@ if center_country in G:
     outer_df = outer_df.groupby("from")["value"].sum().reset_index()
     outer_df = outer_df[outer_df["value"] >= outer_value_threshold]
     outer_df = outer_df.merge(df_product[["from", "ex_region"]].drop_duplicates(), on="from", how="left")
+
+    outer_heat = outer_df.nlargest(36, "value")
+    outer_heat = outer_heat.sort_values(by=["ex_region", "value"], ascending=[True, False])
+    outer_heat = outer_heat["from"].tolist()
 
     # Limit the number of outer circle nodes to 25 per region
     outer_df = outer_df.nlargest(25, "value")
@@ -343,9 +342,9 @@ region_colors = {
     "Asien"         : "#ff7f0e",
     "Afrika"        : "#2ca02c",
     "Ozeanien"      : "#f25a78",
-    "Amerikas"      : "#9467bd",
-    "Europa - EU"   : "#057ef7",
-    "Europa - Rest" : "#abd0f5",
+    "Amerika"       : "#9467bd",
+    "Europa-EU"     : "#057ef7",
+    "Europa-Rest"   : "#abd0f5",
 }
 
 # Node trace with actual country names and ISO3 labels
@@ -378,9 +377,9 @@ for node in G.nodes():
     node_color.append(region_colors.get(region, "lightgray"))
     label = (
         f"{name} ({iso3_code})<br>"
+        f"Risiko: {risk_display}"
         f"Exporte - Gesamt: Tsd. EUR {exports:,.0f}<br>"
         f"Exporte - {center_country}: Tsd. EUR {exports_to_center:,.0f} ({exports_share:.2f}%)<br>"
-        f"Risiko: {risk_display}"
     )
     node_text.append(label)
 
@@ -570,9 +569,8 @@ with col3:
 
 
 
-
     # Get top_n countries by direct hub score
-    top_countries = [c for c in inner_circle + outer_circle if c != "AUT"]
+    top_countries = [c for c in inner_circle + outer_heat if c != "AUT"]
     top_countries = sorted(top_countries, key=lambda c: hubs_direct.get(c, 0), reverse=True)[:10]
     top_countries = top_countries[::-1]
 
@@ -626,7 +624,114 @@ with col3:
     st.plotly_chart(fig_heatmap, use_container_width=True)
         
 
-        # --- Add DataSheet at the bottom ---
+
+    # --- Pairwise Hub × Authority × Flow Scores ---
+
+
+
+    # Direct (1st iteration)
+    if metric_type == "Ströme":
+        hub_scores_direct = hits_history_raw[0]["Hub"]
+        auth_scores_direct = hits_history_raw[0]["Authority"]
+    else:
+        hub_scores_direct = hits_history_risk[0]["Hub"]
+        auth_scores_direct = hits_history_risk[0]["Authority"]
+
+    pairwise_scores_direct = pd.DataFrame(index=adj_df.index, columns=adj_df.columns, dtype=float)
+
+    for from_country in adj_df.index:
+        for to_country in adj_df.columns:
+            flow = adj_df.loc[from_country, to_country]
+            score = hub_scores_direct[from_country] * auth_scores_direct[to_country] * flow * 100
+            pairwise_scores_direct.loc[from_country, to_country] = score
+
+    aut_scores_direct = pairwise_scores_direct.loc[:, "AUT"].copy().astype(float).sort_values(ascending=False).head(10)
+
+
+    # Indirect (last iteration)
+    if metric_type == "Ströme":
+        hub_scores = hits_history_raw[-1]["Hub"]
+        auth_scores = hits_history_raw[-1]["Authority"]
+    else:
+        hub_scores = hits_history_risk[-1]["Hub"]
+        auth_scores = hits_history_risk[-1]["Authority"]
+
+
+    # Compute flow-weighted hub-authority scores
+    pairwise_scores = pd.DataFrame(index=adj_df.index, columns=adj_df.columns, dtype=float)
+
+    # Compute flow-weighted hub-authority scores
+    for from_country in adj_df.index:
+        for to_country in adj_df.columns:
+            flow = adj_df.loc[from_country, to_country]
+            score = hub_scores[from_country] * auth_scores[to_country] * flow * 100
+            pairwise_scores.loc[from_country, to_country] = score
+
+    # --- Show heatplot for AUT only ---
+    aut_scores = pairwise_scores.loc[:, "AUT"].copy()
+    aut_scores = aut_scores.astype(float)
+    aut_scores_indirect = aut_scores.sort_values(ascending=False).head(10)  # Limit to top 10
+
+
+
+
+    # Combine for heatmap
+    z = np.vstack([aut_scores_direct.values, aut_scores_indirect.values])
+    x_labels = ["Direkt", "Indirekt"]
+    y_labels = aut_scores_indirect.index  # Top 10 countries by indirect score (highest at top)
+
+
+    # st.markdown("### Paarweiser Hub × Authority × Flow Score für AUT (Direkt & Indirekt, Top 10, letzte Iteration)")
+    fig_aut = go.Figure(
+        data=go.Heatmap(
+            z=z.T,  # Transpose to swap axes
+            x=x_labels,
+            y=y_labels,
+            colorscale='Sunsetdark',
+            zmin=0,
+            zmax=6,
+            colorbar=dict(
+                title="Index",
+                tickvals=[0, 1, 2, 3, 4, 5, 6],
+                ticktext=["0", "1", "2", "3", "4", "5", "6"],  
+                thickness=15  # Adjust thickness as needed
+            ),
+            showscale=True,
+            text=[[f"{val:.2f}" for val in row] for row in z.T],  # Display value in each cell
+            hovertemplate="%{z:.2f}<extra></extra>"
+        )
+    )
+    fig_aut.update_layout(
+        height=500,
+        margin=dict(l=10, r=10, t=40, b=40),
+        yaxis=dict(autorange='reversed'),
+        title=dict(
+            text="Abhängigkeitsindex v2 (Top 10)",
+            font=dict(size=16),
+            x=0.5,
+            xanchor="center"
+        )
+    )
+
+    # Add annotations for each cell value
+    for i, country in enumerate(y_labels):
+        for j, col in enumerate(x_labels):
+            fig_aut.add_annotation(
+                x=col,
+                y=country,
+                text=f"{z[j][i]:.2f}",
+                showarrow=False,
+                font=dict(color="black", size=14),
+                xanchor="center",
+                yanchor="middle"
+            )
+
+    st.plotly_chart(fig_aut, use_container_width=True)
+
+
+
+
+# --- Add DataSheet at the bottom ---
 
 # Filter EU nodes
 eu_nodes = [n for n in G.nodes if df[df["to"] == n]["eu"].any()]
@@ -642,17 +747,17 @@ df_datasheet = pd.DataFrame({
         if "ps_norm" in df_product.columns and n in df_product["to"].values else np.nan
         for n in displayed_countries
     ],
-    "Unweighted Hub Direct": [hubs_direct_raw.get(n, np.nan) for n in displayed_countries],
-    "Unweighted Hub Indirect": [hubs_indirect_raw.get(n, np.nan) for n in displayed_countries],
-    "Weighted Hub Direct": [hubs_direct_risk.get(n, np.nan) for n in displayed_countries],
-    "Weighted Hub Indirect": [hubs_indirect_risk.get(n, np.nan) for n in displayed_countries],
-    #"ps_norm risk value": [
-    #    df_product[df_product["from"] == n]["ps_norm"].iloc[0] if "ps_norm" in df_product.columns and n in df_product["from"].values and len(df_product[df_product["from"] == n]["ps_norm"]) > 0 else np.nan
-    #    for n in displayed_countries
-    #],
-
+    "Unweighted Hub Direct"     : [hubs_direct_raw.get(n, np.nan) for n in displayed_countries],
+    "Unweighted Hub Indirect"   : [hubs_indirect_raw.get(n, np.nan) for n in displayed_countries],
+    "Weighted Hub Direct"       : [hubs_direct_risk.get(n, np.nan) for n in displayed_countries],
+    "Weighted Hub Indirect"     : [hubs_indirect_risk.get(n, np.nan) for n in displayed_countries],
+    "Unweighted Authority Direct": [hits_history_raw[0]["Authority"].get(n, np.nan) * 10 for n in displayed_countries],
+    "Unweighted Authority Indirect": [hits_history_raw[4]["Authority"].get(n, np.nan) * 10 for n in displayed_countries],
+    "Weighted Authority Direct": [hits_history_risk[0]["Authority"].get(n, np.nan) * 10 for n in displayed_countries],
+    "Weighted Authority Indirect": [hits_history_risk[4]["Authority"].get(n, np.nan) * 10 for n in displayed_countries],
 })
 
-
-st.markdown("### Übersicht aller Länder (normalisiert am Gesamtnetz)")
+st.markdown("### Übersicht")
 st.dataframe(df_datasheet, hide_index=True)
+# st.dataframe(adj_df)
+
