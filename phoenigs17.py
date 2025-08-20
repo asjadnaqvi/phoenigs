@@ -254,7 +254,7 @@ risk_threshold = col1.slider(
     "Risk thresholds", 
     min_value=0.0, 
     max_value=1.0, 
-    value=(0.4, 0.65), 
+    value=(0.35, 0.55), 
     step=0.05
 )
 
@@ -488,6 +488,13 @@ with col2:
 # --- Calculate and display hub scores ---
 with col3:
 
+    if metric_type == "Ströme":
+        colorscale_option = 'YlGnBu'
+        label_option = "Ungewichtet"
+    else:
+        colorscale_option = 'Sunsetdark'
+        label_option = "Risikogewichtet"
+
     edge_columns_present = [col for col in edge_columns if col in df_product.columns]
 
     G_full = nx.from_pandas_edgelist(
@@ -588,7 +595,7 @@ with col3:
             z=z,
             x=x,
             y=y,
-            colorscale='Sunsetdark',
+            colorscale=colorscale_option,
             zmin=1,
             zmax=6,
             colorbar=dict(
@@ -673,8 +680,6 @@ with col3:
     aut_scores_indirect = aut_scores.sort_values(ascending=False).head(10)  # Limit to top 10
 
 
-
-
     # Combine for heatmap
     z = np.vstack([aut_scores_direct.values, aut_scores_indirect.values])
     x_labels = ["Direkt", "Indirekt"]
@@ -687,13 +692,13 @@ with col3:
             z=z.T,  # Transpose to swap axes
             x=x_labels,
             y=y_labels,
-            colorscale='Sunsetdark',
-            zmin=0,
-            zmax=6,
+            colorscale=colorscale_option,
+            zmin=1,
+            zmax=8,
             colorbar=dict(
                 title="Index",
-                tickvals=[0, 1, 2, 3, 4, 5, 6],
-                ticktext=["0", "1", "2", "3", "4", "5", "6"],  
+                tickvals=[0, 1, 2, 3, 4, 5, 6, 7, 8],
+                ticktext=["0", "1", "2", "3", "4", "5", "6", "7", "8"],  
                 thickness=15  # Adjust thickness as needed
             ),
             showscale=True,
@@ -706,7 +711,7 @@ with col3:
         margin=dict(l=10, r=10, t=40, b=40),
         yaxis=dict(autorange='reversed'),
         title=dict(
-            text="Abhängigkeitsindex v2 (Top 10)",
+            text=label_option,
             font=dict(size=16),
             x=0.5,
             xanchor="center"
@@ -714,17 +719,17 @@ with col3:
     )
 
     # Add annotations for each cell value
-    for i, country in enumerate(y_labels):
-        for j, col in enumerate(x_labels):
-            fig_aut.add_annotation(
-                x=col,
-                y=country,
-                text=f"{z[j][i]:.2f}",
-                showarrow=False,
-                font=dict(color="black", size=14),
-                xanchor="center",
-                yanchor="middle"
-            )
+    #for i, country in enumerate(y_labels):
+    #    for j, col in enumerate(x_labels):
+    #        fig_aut.add_annotation(
+    #            x=col,
+    #            y=country,
+    #            text=f"{z[j][i]:.2f}",
+    #            showarrow=False,
+    #            font=dict(color="black", size=14),
+    #            xanchor="center",
+    #            yanchor="middle"
+    #        )
 
     st.plotly_chart(fig_aut, use_container_width=True)
 
@@ -737,6 +742,11 @@ with col3:
 eu_nodes = [n for n in G.nodes if df[df["to"] == n]["eu"].any()]
 
 displayed_countries = sorted(list(G.nodes))
+
+# Ensure aut_scores_direct and aut_scores_indirect are Series with all countries as index
+aut_scores_direct_full = pairwise_scores_direct.loc[:, "AUT"].copy().astype(float)
+aut_scores_indirect_full = pairwise_scores.loc[:, "AUT"].copy().astype(float)
+
 
 df_datasheet = pd.DataFrame({
     "Country": displayed_countries,
@@ -751,13 +761,18 @@ df_datasheet = pd.DataFrame({
     "Unweighted Hub Indirect"   : [hubs_indirect_raw.get(n, np.nan) for n in displayed_countries],
     "Weighted Hub Direct"       : [hubs_direct_risk.get(n, np.nan) for n in displayed_countries],
     "Weighted Hub Indirect"     : [hubs_indirect_risk.get(n, np.nan) for n in displayed_countries],
-    "Unweighted Authority Direct": [hits_history_raw[0]["Authority"].get(n, np.nan) * 10 for n in displayed_countries],
-    "Unweighted Authority Indirect": [hits_history_raw[4]["Authority"].get(n, np.nan) * 10 for n in displayed_countries],
-    "Weighted Authority Direct": [hits_history_risk[0]["Authority"].get(n, np.nan) * 10 for n in displayed_countries],
-    "Weighted Authority Indirect": [hits_history_risk[4]["Authority"].get(n, np.nan) * 10 for n in displayed_countries],
+    "Unweighted Authority Direct"   : [hits_history_raw[0]["Authority"].get(n, np.nan) * 10 for n in displayed_countries],
+    "Unweighted Authority Indirect" : [hits_history_raw[4]["Authority"].get(n, np.nan) * 10 for n in displayed_countries],
+    "Weighted Authority Direct"     : [hits_history_risk[0]["Authority"].get(n, np.nan) * 10 for n in displayed_countries],
+    "Weighted Authority Indirect"   : [hits_history_risk[4]["Authority"].get(n, np.nan) * 10 for n in displayed_countries],
+    "AUT Score Direct"              : [aut_scores_direct_full.get(n, np.nan) for n in displayed_countries],
+    "AUT Score Indirect"            : [aut_scores_indirect_full.get(n, np.nan) for n in displayed_countries]
 })
 
 st.markdown("### Übersicht")
 st.dataframe(df_datasheet, hide_index=True)
 # st.dataframe(adj_df)
 
+
+
+## NOTE: Ungewichtet vs. Risikogewichtet
