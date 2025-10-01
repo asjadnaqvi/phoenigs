@@ -576,7 +576,7 @@ with col3:
 
 
 
-    # Get top_n countries by direct hub score
+    # Get top_n countries by direct hub score [CHECK THIS]
     top_countries = [c for c in inner_circle + outer_heat if c != "AUT"]
     top_countries = sorted(top_countries, key=lambda c: hubs_direct.get(c, 0), reverse=True)[:10]
     top_countries = top_countries[::-1]
@@ -685,13 +685,19 @@ with col3:
     x_labels = ["Direkt", "Indirekt"]
     y_labels = aut_scores_indirect.index  # Top 10 countries by indirect score (highest at top)
 
+    # Sort y_labels (country names) by direct score (descending)
+    sorted_indices = np.argsort(-aut_scores_direct.values)
+    y_labels_sorted = [aut_scores_direct.index[i] for i in sorted_indices]
+    z_sorted = np.vstack([
+        aut_scores_direct.values[sorted_indices],
+        aut_scores_indirect.reindex(y_labels_sorted).values
+    ])
 
-    # st.markdown("### Paarweiser Hub × Authority × Flow Score für AUT (Direkt & Indirekt, Top 10, letzte Iteration)")
     fig_aut = go.Figure(
         data=go.Heatmap(
-            z=z.T,  # Transpose to swap axes
+            z=z_sorted.T,  # Transpose to swap axes
             x=x_labels,
-            y=y_labels,
+            y=y_labels_sorted,
             colorscale=colorscale_option,
             zmin=1,
             zmax=8,
@@ -699,10 +705,10 @@ with col3:
                 title="Index",
                 tickvals=[0, 1, 2, 3, 4, 5, 6, 7, 8],
                 ticktext=["0", "1", "2", "3", "4", "5", "6", "7", "8"],  
-                thickness=15  # Adjust thickness as needed
+                thickness=15
             ),
             showscale=True,
-            text=[[f"{val:.2f}" for val in row] for row in z.T],  # Display value in each cell
+            text=[[f"{val:.2f}" for val in row] for row in z_sorted.T],
             hovertemplate="%{z:.2f}<extra></extra>"
         )
     )
