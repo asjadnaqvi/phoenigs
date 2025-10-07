@@ -576,7 +576,7 @@ with col3:
 
 
 
-    # Get top_n countries by direct hub score [CHECK THIS]
+    # Get top_n countries by direct hub score
     top_countries = [c for c in inner_circle + outer_heat if c != "AUT"]
     top_countries = sorted(top_countries, key=lambda c: hubs_direct.get(c, 0), reverse=True)[:10]
     top_countries = top_countries[::-1]
@@ -677,27 +677,24 @@ with col3:
     # --- Show heatplot for AUT only ---
     aut_scores = pairwise_scores.loc[:, "AUT"].copy()
     aut_scores = aut_scores.astype(float)
+    # Sort by Indirekt (aut_scores), not Direkt
     aut_scores_indirect = aut_scores.sort_values(ascending=False).head(10)  # Limit to top 10
 
+    # Get the corresponding Direkt scores for the same countries (in the same order)
+    aut_scores_direct_selected = aut_scores_direct.reindex(aut_scores_indirect.index)
 
     # Combine for heatmap
-    z = np.vstack([aut_scores_direct.values, aut_scores_indirect.values])
+    z = np.vstack([aut_scores_direct_selected.values, aut_scores_indirect.values])
     x_labels = ["Direkt", "Indirekt"]
     y_labels = aut_scores_indirect.index  # Top 10 countries by indirect score (highest at top)
 
-    # Sort y_labels (country names) by direct score (descending)
-    sorted_indices = np.argsort(-aut_scores_direct.values)
-    y_labels_sorted = [aut_scores_direct.index[i] for i in sorted_indices]
-    z_sorted = np.vstack([
-        aut_scores_direct.values[sorted_indices],
-        aut_scores_indirect.reindex(y_labels_sorted).values
-    ])
 
+    # st.markdown("### Paarweiser Hub × Authority × Flow Score für AUT (Direkt & Indirekt, Top 10, letzte Iteration)")
     fig_aut = go.Figure(
         data=go.Heatmap(
-            z=z_sorted.T,  # Transpose to swap axes
+            z=z.T,  # Transpose to swap axes
             x=x_labels,
-            y=y_labels_sorted,
+            y=y_labels,
             colorscale=colorscale_option,
             zmin=1,
             zmax=8,
@@ -705,13 +702,14 @@ with col3:
                 title="Index",
                 tickvals=[0, 1, 2, 3, 4, 5, 6, 7, 8],
                 ticktext=["0", "1", "2", "3", "4", "5", "6", "7", "8"],  
-                thickness=15
+                thickness=15  # Adjust thickness as needed
             ),
             showscale=True,
-            text=[[f"{val:.2f}" for val in row] for row in z_sorted.T],
+            text=[[f"{val:.2f}" for val in row] for row in z.T],  # Display value in each cell
             hovertemplate="%{z:.2f}<extra></extra>"
         )
     )
+    
     fig_aut.update_layout(
         height=500,
         margin=dict(l=10, r=10, t=40, b=40),
@@ -750,8 +748,8 @@ eu_nodes = [n for n in G.nodes if df[df["to"] == n]["eu"].any()]
 displayed_countries = sorted(list(G.nodes))
 
 # Ensure aut_scores_direct and aut_scores_indirect are Series with all countries as index
-aut_scores_direct_full = pairwise_scores_direct.loc[:, "AUT"].copy().astype(float)
-aut_scores_indirect_full = pairwise_scores.loc[:, "AUT"].copy().astype(float)
+aut_scores_direct_full      = pairwise_scores_direct.loc[:, "AUT"].copy().astype(float)
+aut_scores_indirect_full    = pairwise_scores.loc[:, "AUT"].copy().astype(float)
 
 
 df_datasheet = pd.DataFrame({
