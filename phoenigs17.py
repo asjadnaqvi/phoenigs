@@ -652,8 +652,9 @@ with col3:
             score = hub_scores_direct[from_country] * auth_scores_direct[to_country] * flow * 100
             pairwise_scores_direct.loc[from_country, to_country] = score
 
-    aut_scores_direct = pairwise_scores_direct.loc[:, "AUT"].copy().astype(float).sort_values(ascending=False).head(10)
-
+    # Do NOT limit aut_scores_direct here, keep all countries
+    aut_scores_direct = pairwise_scores_direct.loc[:, "AUT"].copy().astype(float)
+    # aut_scores_direct = aut_scores_direct.sort_values(ascending=False).head(10)  # REMOVE THIS LINE
 
     # Indirect (last iteration)
     if metric_type == "Ströme":
